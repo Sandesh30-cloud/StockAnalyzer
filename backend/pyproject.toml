@@ -9,3 +9,6 @@ dependencies = [
     "pandas>=2.2.0",
     "numpy>=1.26.0"
 ]
+
+[project.scripts]
+market-assistant = "cli:main"

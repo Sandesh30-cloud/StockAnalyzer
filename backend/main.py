@@ -287,6 +287,23 @@ def compute_trend_metrics(hist: pd.DataFrame) -> dict:
     price_change_1m = None
     price_change_3m = None
     volume_trend = None
+    sma_20 = None
+    sma_50 = None
+    moving_average_signal = "Neutral"
+
+    if not hist.empty and "Close" in hist.columns and len(hist) >= 20:
+        close_series = hist["Close"].dropna()
+        if len(close_series) >= 20:
+            sma_20 = float(close_series.tail(20).mean())
+        if len(close_series) >= 50:
+            sma_50 = float(close_series.tail(50).mean())
+
+        if sma_20 is not None and sma_50 is not None and not close_series.empty:
+            current_price = float(close_series.iloc[-1])
+            if current_price > sma_20 > sma_50:
+                moving_average_signal = "Bullish"
+            elif current_price < sma_20 < sma_50:
+                moving_average_signal = "Bearish"
 
     if not hist.empty and len(hist) > 20:
         current_price = hist["Close"].iloc[-1]
@@ -308,10 +325,19 @@ def compute_trend_metrics(hist: pd.DataFrame) -> dict:
         "priceChange1m": round(price_change_1m, 2) if price_change_1m is not None else None,
         "priceChange3m": round(price_change_3m, 2) if price_change_3m is not None else None,
         "volumeTrend": round(volume_trend, 2) if volume_trend is not None else None,
+        "sma20": round(sma_20, 2) if sma_20 is not None else None,
+        "sma50": round(sma_50, 2) if sma_50 is not None else None,
+        "movingAverageSignal": moving_average_signal,
     }
 
 
 def get_trend_label(metrics: dict) -> str:
+    moving_average_signal = metrics.get("movingAverageSignal")
+    if moving_average_signal == "Bullish":
+        return "Uptrend"
+    if moving_average_signal == "Bearish":
+        return "Downtrend"
+
     price_change_1m = metrics.get("priceChange1m")
     price_change_3m = metrics.get("priceChange3m")
 
@@ -385,6 +411,9 @@ def build_recommendation_payload(symbol: str, info: dict, balance_sheet: Optiona
     price_change_1m = trend_metrics["priceChange1m"]
     price_change_3m = trend_metrics["priceChange3m"]
     volume_trend = trend_metrics["volumeTrend"]
+    sma_20 = trend_metrics["sma20"]
+    sma_50 = trend_metrics["sma50"]
+    moving_average_signal = trend_metrics["movingAverageSignal"]
 
     if price_change_1m is not None:
         if price_change_1m > 5:
@@ -403,6 +432,16 @@ def build_recommendation_payload(symbol: str, info: dict, balance_sheet: Optiona
         elif volume_trend < -20:
             short_term_signals.append({"type": "negative", "message": f"Declining volume: {volume_trend:.1f}% (reduced interest)"})
             short_term_score -= 1
+
+    if sma_20 is not None and sma_50 is not None:
+        if moving_average_signal == "Bullish":
+            short_term_signals.append({"type": "positive", "message": f"Bullish moving-average setup: price is above SMA20 ({sma_20:.2f}) and SMA50 ({sma_50:.2f})"})
+            short_term_score += 2
+        elif moving_average_signal == "Bearish":
+            short_term_signals.append({"type": "negative", "message": f"Bearish moving-average setup: price is below SMA20 ({sma_20:.2f}) and SMA50 ({sma_50:.2f})"})
+            short_term_score -= 2
+        else:
+            short_term_signals.append({"type": "neutral", "message": f"Mixed moving-average setup around SMA20 ({sma_20:.2f}) and SMA50 ({sma_50:.2f})"})
 
     if beta is not None:
         if beta > 1.5:
@@ -499,6 +538,20 @@ def build_ai_analysis(payload: dict, news_analysis: dict, stock_info: dict) -> d
             score -= 5
             bearish.append(f"Negative 3-month momentum at {price_change_3m:.1f}%")
 
+    moving_average_signal = metrics.get("movingAverageSignal")
+    sma_20 = metrics.get("sma20")
+    sma_50 = metrics.get("sma50")
+    if moving_average_signal == "Bullish":
+        score += 10
+        bullish.append(
+            f"Moving averages are bullish with SMA20 at {sma_20:.2f} above SMA50 at {sma_50:.2f}"
+        )
+    elif moving_average_signal == "Bearish":
+        score -= 10
+        bearish.append(
+            f"Moving averages are bearish with SMA20 at {sma_20:.2f} below SMA50 at {sma_50:.2f}"
+        )
+
     price_change_1m = metrics.get("priceChange1m")
     if isinstance(price_change_1m, (int, float)):
         if price_change_1m >= 4:
@@ -584,6 +637,169 @@ def extract_yahoo_news_articles(symbol: str, limit: int = 8) -> list[dict]:
         })
 
     return articles
+
+
+def calculate_max_drawdown(equity_curve: pd.Series) -> float:
+    if equity_curve.empty:
+        return 0.0
+    rolling_peak = equity_curve.cummax()
+    drawdown = (equity_curve / rolling_peak) - 1
+    return float(drawdown.min())
+
+
+def compute_rsi(close_series: pd.Series, window: int = 14) -> pd.Series:
+    delta = close_series.diff()
+    gains = delta.clip(lower=0)
+    losses = -delta.clip(upper=0)
+    avg_gain = gains.rolling(window).mean()
+    avg_loss = losses.rolling(window).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50)
+
+
+def run_moving_average_backtest(hist: pd.DataFrame) -> dict:
+    """Backtest a trend-following strategy with SMA and RSI confirmation."""
+    if hist.empty or "Close" not in hist.columns:
+        return {"error": "No historical data available for backtesting"}
+
+    prices = hist[["Close"]].dropna().copy()
+    if len(prices) < 80:
+        return {"error": "Not enough historical data for backtesting"}
+
+    risk_pct = 0.08
+    reward_pct = risk_pct * 3
+
+    prices["sma20"] = prices["Close"].rolling(20).mean()
+    prices["sma50"] = prices["Close"].rolling(50).mean()
+    prices["rsi14"] = compute_rsi(prices["Close"])
+    prices["trendSignal"] = (
+        (prices["Close"] > prices["sma20"]) &
+        (prices["sma20"] > prices["sma50"]) &
+        (prices["rsi14"] >= 50) &
+        (prices["rsi14"] <= 70)
+    )
+    prices["dailyReturn"] = prices["Close"].pct_change().fillna(0.0)
+
+    positions = []
+    trades = []
+    in_position = False
+    entry = None
+    entry_price = 0.0
+    peak_price = 0.0
+
+    for idx, row in prices.iterrows():
+        close_price = float(row["Close"])
+        bullish_setup = bool(row["trendSignal"]) and pd.notna(row["sma50"])
+        bearish_exit = (
+            (pd.notna(row["sma20"]) and close_price < float(row["sma20"])) or
+            row["rsi14"] < 45
+        )
+
+        if not in_position and bullish_setup:
+            in_position = True
+            entry_price = close_price
+            peak_price = close_price
+            entry = {
+                "entryTimestamp": idx,
+                "entryDate": str(idx.date()),
+                "entryPrice": round(entry_price, 2),
+                "entryRsi": round(float(row["rsi14"]), 2),
+                "entrySignal": "Trend + RSI confirmation",
+            }
+        elif in_position:
+            peak_price = max(peak_price, close_price)
+            trailing_stop_hit = close_price <= peak_price * (1 - risk_pct)
+            take_profit_hit = close_price >= entry_price * (1 + reward_pct)
+
+            if bearish_exit or trailing_stop_hit or take_profit_hit:
+                exit_reason = "SMA20 breakdown / RSI weakness"
+                if trailing_stop_hit:
+                    exit_reason = "1:3 risk-reward trailing stop"
+                elif take_profit_hit:
+                    exit_reason = "1:3 risk-reward take profit"
+
+                trade_return = ((close_price - entry_price) / entry_price) * 100
+                trades.append({
+                    **{key: value for key, value in entry.items() if key != "entryTimestamp"},
+                    "exitDate": str(idx.date()),
+                    "exitPrice": round(close_price, 2),
+                    "returnPercent": round(trade_return, 2),
+                    "exitRsi": round(float(row["rsi14"]), 2),
+                    "exitReason": exit_reason,
+                    "holdingDays": int((idx - entry["entryTimestamp"]).days),
+                })
+                in_position = False
+                entry = None
+                entry_price = 0.0
+                peak_price = 0.0
+
+        positions.append(1 if in_position else 0)
+
+    prices["position"] = pd.Series(positions, index=prices.index, dtype=float)
+    prices["strategyReturn"] = prices["position"].shift(1).fillna(0.0) * prices["dailyReturn"]
+    prices["equityCurve"] = (1 + prices["strategyReturn"]).cumprod()
+    prices["buyHoldCurve"] = (1 + prices["dailyReturn"]).cumprod()
+    prices["positionChange"] = prices["position"].diff().fillna(prices["position"])
+
+    if in_position and entry is not None:
+        final_close = float(prices["Close"].iloc[-1])
+        trade_return = ((final_close - entry_price) / entry_price) * 100
+        trades.append({
+            **{key: value for key, value in entry.items() if key != "entryTimestamp"},
+            "exitDate": "Open",
+            "exitPrice": round(final_close, 2),
+            "returnPercent": round(trade_return, 2),
+            "exitRsi": round(float(prices["rsi14"].iloc[-1]), 2),
+            "exitReason": "Position still open",
+            "holdingDays": int((prices.index[-1] - entry["entryTimestamp"]).days),
+        })
+
+    completed_trades = [trade for trade in trades if trade["exitDate"] != "Open"]
+    wins = [trade for trade in completed_trades if trade["returnPercent"] > 0]
+    exposure_days = int(prices["position"].sum())
+    avg_trade = float(np.mean([trade["returnPercent"] for trade in completed_trades])) if completed_trades else 0.0
+    best_trade = float(max((trade["returnPercent"] for trade in completed_trades), default=0.0))
+    worst_trade = float(min((trade["returnPercent"] for trade in completed_trades), default=0.0))
+    current_signal = "Bullish" if bool(prices["trendSignal"].iloc[-1]) else "Bearish" if (
+        pd.notna(prices["sma20"].iloc[-1]) and pd.notna(prices["sma50"].iloc[-1]) and
+        float(prices["Close"].iloc[-1]) < float(prices["sma20"].iloc[-1]) < float(prices["sma50"].iloc[-1])
+    ) else "Neutral"
+
+    return {
+        "strategy": "SMA20/SMA50 + RSI momentum filter with stop-loss/take-profit",
+        "rules": [
+            "Enter long when price > SMA20 > SMA50 and RSI14 is between 50 and 70.",
+            "Use a 1:3 risk-reward framework with an 8% trailing stop and a 24% take-profit target.",
+            "Exit when price closes below SMA20, RSI14 drops below 45, the trailing stop is hit, or the take-profit target is reached.",
+            "Stay in cash when trend and momentum conditions are not aligned.",
+        ],
+        "periodStart": str(prices.index[0].date()),
+        "periodEnd": str(prices.index[-1].date()),
+        "signals": {
+            "currentSignal": current_signal,
+            "buySignals": int((prices["positionChange"] > 0).sum()),
+            "sellSignals": int((prices["positionChange"] < 0).sum()),
+        },
+        "metrics": {
+            "totalReturnPercent": round((prices["equityCurve"].iloc[-1] - 1) * 100, 2),
+            "buyHoldReturnPercent": round((prices["buyHoldCurve"].iloc[-1] - 1) * 100, 2),
+            "maxDrawdownPercent": round(calculate_max_drawdown(prices["equityCurve"]) * 100, 2),
+            "winRatePercent": round((len(wins) / len(completed_trades)) * 100, 2) if completed_trades else 0.0,
+            "tradeCount": len(trades),
+            "exposurePercent": round((exposure_days / len(prices)) * 100, 2),
+            "avgTradeReturnPercent": round(avg_trade, 2),
+            "bestTradePercent": round(best_trade, 2),
+            "worstTradePercent": round(worst_trade, 2),
+        },
+        "latest": {
+            "close": round(float(prices["Close"].iloc[-1]), 2),
+            "sma20": round(float(prices["sma20"].iloc[-1]), 2) if pd.notna(prices["sma20"].iloc[-1]) else None,
+            "sma50": round(float(prices["sma50"].iloc[-1]), 2) if pd.notna(prices["sma50"].iloc[-1]) else None,
+            "rsi14": round(float(prices["rsi14"].iloc[-1]), 2) if pd.notna(prices["rsi14"].iloc[-1]) else None,
+        },
+        "trades": trades[-8:],
+    }
 
 
 @app.get("/health")
@@ -1014,6 +1230,20 @@ async def get_ai_analysis(symbol: str):
             "bearishFactors": [],
             "error": str(e),
         }
+
+
+@app.get("/backtest/{symbol}")
+async def get_backtest(symbol: str, period: str = "2y"):
+    """Run a simple moving-average backtest for a stock."""
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period=period, auto_adjust=False)
+        result = run_moving_average_backtest(hist)
+        if "error" in result:
+            return {"symbol": symbol, **result}
+        return {"symbol": symbol, **result}
+    except Exception as e:
+        return {"symbol": symbol, "error": str(e)}
 
 
 @app.get("/screener")

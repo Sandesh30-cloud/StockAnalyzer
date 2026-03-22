@@ -51,6 +51,9 @@ interface RecommendationData {
     priceChange1m: number | null
     priceChange3m: number | null
     volumeTrend: number | null
+    sma20: number | null
+    sma50: number | null
+    movingAverageSignal: 'Bullish' | 'Neutral' | 'Bearish'
   }
   error?: string
 }
@@ -124,7 +127,10 @@ function MetricCard({ label, value, format }: { label: string; value: number | n
 function getTrendLabel(metrics: RecommendationData['metrics'] | undefined) {
   if (!metrics) return 'Sideways'
 
-  const { priceChange1m, priceChange3m } = metrics
+  const { priceChange1m, priceChange3m, movingAverageSignal } = metrics
+  if (movingAverageSignal === 'Bullish') return 'Uptrend'
+  if (movingAverageSignal === 'Bearish') return 'Downtrend'
+
   if (
     typeof priceChange1m === 'number' &&
     typeof priceChange3m === 'number' &&
@@ -201,17 +207,17 @@ export function Recommendation({ symbols }: RecommendationProps) {
   const { data, isLoading } = useSWR<RecommendationData>(
     selectedSymbol ? `/api/recommendation/${selectedSymbol}` : null,
     fetcher,
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: false, refreshInterval: 60000 }
   )
   const { data: newsData } = useSWR<NewsAnalysisData>(
     selectedSymbol ? `/api/news-analysis/${selectedSymbol}` : null,
     fetcher,
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: false, refreshInterval: 60000 }
   )
   const { data: aiData, isLoading: isAiLoading } = useSWR<AIAnalysisData>(
     selectedSymbol ? `/api/ai-analysis/${selectedSymbol}` : null,
     fetcher,
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: false, refreshInterval: 60000 }
   )
 
   const trend = useMemo(() => getTrendLabel(data?.metrics), [data?.metrics])
@@ -297,7 +303,7 @@ export function Recommendation({ symbols }: RecommendationProps) {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <BrainCircuit className="size-4 text-primary" />
-                <h4 className="font-medium">From-Scratch AI Engine</h4>
+                <h4 className="font-medium">From AI Engine</h4>
               </div>
               {isAiLoading ? (
                 <div className="space-y-2 pt-2">
@@ -349,6 +355,17 @@ export function Recommendation({ symbols }: RecommendationProps) {
               Sentiment: {overallSentiment}
             </Badge>
             <Badge variant="outline">Trend: {trend}</Badge>
+            <Badge
+              variant={
+                data?.metrics?.movingAverageSignal === 'Bullish'
+                  ? 'success'
+                  : data?.metrics?.movingAverageSignal === 'Bearish'
+                    ? 'destructive'
+                    : 'warning'
+              }
+            >
+              MA Signal: {data?.metrics?.movingAverageSignal ?? 'Neutral'}
+            </Badge>
             <Badge variant="outline">Articles: {newsData?.articles?.length ?? 0}</Badge>
           </div>
           {newsData?.error && (
@@ -418,6 +435,8 @@ export function Recommendation({ symbols }: RecommendationProps) {
             <MetricCard label="ROE" value={data?.metrics?.roe ?? null} format={(v) => `${v.toFixed(1)}%`} />
             <MetricCard label="D/E Ratio" value={data?.metrics?.debtToEquity ?? null} />
             <MetricCard label="Beta" value={data?.metrics?.beta ?? null} />
+            <MetricCard label="SMA 20" value={data?.metrics?.sma20 ?? null} />
+            <MetricCard label="SMA 50" value={data?.metrics?.sma50 ?? null} />
             <MetricCard 
               label="1M Change" 
               value={data?.metrics?.priceChange1m ?? null} 

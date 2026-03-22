@@ -59,7 +59,7 @@ export function ComparisonTable({ symbols }: ComparisonTableProps) {
   const { data, error, isLoading } = useSWR<{ comparison: ComparisonStock[] }>(
     symbols.length >= 2 ? `/api/compare?symbols=${symbols.join(',')}` : null,
     fetcher,
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: false, refreshInterval: 60000 }
   )
 
   if (symbols.length < 2) {

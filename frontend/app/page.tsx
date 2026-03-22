@@ -9,9 +9,10 @@ import { FinancialsView } from '@/components/financials-view'
 import { HoldersView } from '@/components/holders-view'
 import { Recommendation } from '@/components/recommendation'
 import { NewsSentiment } from '@/components/news-sentiment'
+import { BacktestingView } from '@/components/backtesting-view'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { BarChart3, LineChart, FileText, Users, Lightbulb, Sparkles, Newspaper } from 'lucide-react'
+import { BarChart3, LineChart, FileText, Users, Lightbulb, Sparkles, Newspaper, Activity } from 'lucide-react'
 import { toast } from 'sonner'
 
 export default function HomePage() {
@@ -101,6 +102,10 @@ export default function HomePage() {
                 <Newspaper className="size-4" />
                 <span className="hidden sm:inline">News & Sentiment</span>
               </TabsTrigger>
+              <TabsTrigger value="backtesting" className="gap-2 rounded-lg data-[state=active]:shadow-sm">
+                <Activity className="size-4" />
+                <span className="hidden sm:inline">Backtesting</span>
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="compare" className="space-y-4 mt-0">
@@ -125,6 +130,10 @@ export default function HomePage() {
 
             <TabsContent value="news" className="space-y-4 mt-0">
               <NewsSentiment symbols={selectedStocks} />
+            </TabsContent>
+
+            <TabsContent value="backtesting" className="space-y-4 mt-0">
+              <BacktestingView symbols={selectedStocks} />
             </TabsContent>
           </Tabs>
         )}

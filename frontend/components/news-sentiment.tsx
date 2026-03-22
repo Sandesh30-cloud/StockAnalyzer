@@ -62,7 +62,7 @@ export function NewsSentiment({ symbols }: NewsSentimentProps) {
   const { data, isLoading } = useSWR<NewsAnalysisResponse>(
     selectedSymbol ? `/api/news-analysis/${selectedSymbol}` : null,
     fetcher,
-    { revalidateOnFocus: false },
+    { revalidateOnFocus: false, refreshInterval: 60000 },
   )
 
   const articles = data?.articles ?? []

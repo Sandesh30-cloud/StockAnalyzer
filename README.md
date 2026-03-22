@@ -1,50 +1,150 @@
 # StockAnalyzer
 
-StockAnalyzer is a full-stack stock analysis dashboard built with a FastAPI backend and a Next.js frontend. It supports multi-stock comparison, normalized financial statement views, price charts, holder analysis, sentiment-powered news analysis, and rule-based investment insights.
+StockAnalyzer is a mini AI market research assistant built with a FastAPI backend and a Next.js dashboard. It fetches live stock data, pulls recent Yahoo Finance news, runs from-scratch sentiment analysis in Python, applies moving-average trend logic, generates Buy/Sell/Hold signals, and explains the decision in plain language.
 
-## Features
+## What It Does
 
-- Multi-stock comparison for up to 5 symbols
-- Stock search with exchange suffix discovery such as `.NS`, `.BO`, `.L`, and `.TO`
-- Historical price charts
-- Financial statements with standardized display scale
-- Institutional, insider, and mutual fund holder views
-- News fetching with sentiment analysis
-- Rule-based recommendation panel using metrics, trend, and news sentiment
-- Currency-aware display for non-US stocks
+- Fetches stock market data for 1 to 5 symbols
+- Fetches latest Yahoo Finance news for each stock
+- Performs Python-based sentiment scoring on headlines and summaries
+- Performs trend analysis using:
+  - 1-month price change
+  - 3-month price change
+  - volume trend
+  - SMA20 / SMA50 moving averages
+- Generates:
+  - Buy / Sell / Hold style views
+  - recommendation signals
+  - explanation text for the decision
+- Supports:
+  - multi-stock comparison
+  - financial statement viewing
+  - holders analysis
+  - price charts
+  - backtesting of an improved trend-following strategy
+  - CLI, API, and React dashboard access
+
+## Approach
+
+The project is split into two parts:
+
+### Backend
+
+The FastAPI backend is responsible for:
+
+- fetching stock and news data from `yfinance`
+- normalizing raw Yahoo Finance values
+- computing financial ratios like ROE and debt-to-equity
+- computing 52-week metrics from historical OHLC data instead of summary fields
+- running from-scratch sentiment analysis using a finance keyword lexicon in Python
+- computing trend metrics and moving-average signals
+- generating recommendation payloads
+- generating a local AI-style reasoning summary
+- running a backtest with moving averages, momentum filtering, and risk controls
+
+### Frontend
+
+The Next.js frontend is responsible for:
+
+- searching and selecting stocks
+- comparing multiple stocks visually
+- rendering financial tables, charts, holders, news, insights, and backtesting
+- polling selected API routes every 60 seconds to keep the dashboard fresh
+
+## AI / Analysis Logic
+
+This project does not use OpenAI or any external LLM API.
+
+Instead, the "AI" part is implemented from scratch in Python:
+
+1. News sentiment:
+   - positive and negative finance terms are matched against article text
+   - each article is classified as `Positive`, `Neutral`, or `Negative`
+2. Trend analysis:
+   - 1M change
+   - 3M change
+   - volume trend
+   - `SMA20`
+   - `SMA50`
+   - moving-average signal:
+     - bullish when `price > SMA20 > SMA50`
+     - bearish when `price < SMA20 < SMA50`
+3. Decision logic:
+   - recommendation scoring uses valuation, ROE, debt, dividend, momentum, moving averages, and news sentiment
+4. Explanation:
+   - the backend assembles a reasoning summary from the strongest bullish and bearish drivers
+
+## Backtesting
+
+The project includes a Python backtesting engine for a trend-following strategy built on:
+
+- `SMA20`
+- `SMA50`
+- `RSI14`
+- `1:3` risk-reward management
+
+Strategy logic:
+
+- enter long when `price > SMA20 > SMA50` and `RSI14` is between `50` and `70`
+- exit when price closes below `SMA20`
+- exit when `RSI14 < 45`
+- use an `8%` trailing stop and a `24%` take-profit target to maintain a `1:3` risk-reward setup
+
+It returns:
+
+- strategy return
+- buy-and-hold return
+- max drawdown
+- win rate
+- trade count
+- exposure
+- average trade return
+- best trade
+- worst trade
+- recent trades
+
+## Assumptions
+
+- Yahoo Finance data accessed through `yfinance` is available at runtime
+- some Yahoo summary fields may be missing or inconsistent, so the backend prefers stronger sources like statements and OHLC history where possible
+- news availability depends on what Yahoo Finance exposes for a symbol
+- this project is for research/demo purposes and not financial advice
+- recommendation and backtesting logic are intentionally simple and explainable, not institutional-grade models
 
 ## Tech Stack
 
-- Frontend: Next.js 16, React 19, Tailwind CSS, Radix UI, SWR, Recharts
-- Backend: FastAPI, yfinance, pandas, numpy
-- News sentiment: Axios + `sentiment`
-
-## Demo Video
-
-Watch the project demo here:
-
-[StockAnalyzer Demo Video](https://youtu.be/5ghnGrWl-SA?si=wDY5NcEY-S8k7ASw)
+- Backend:
+  - FastAPI
+  - yfinance
+  - pandas
+  - numpy
+- Frontend:
+  - Next.js 
+  - React 
+  - Tailwind CSS
+  - Radix UI
+  - SWR
+  - Recharts
 
 ## Project Structure
 
 ```text
 StockAnalyzer/
 ├── backend/
+│   ├── cli.py
 │   ├── main.py
 │   └── pyproject.toml
 ├── frontend/
 │   ├── app/
 │   ├── components/
-│   ├── services/
-│   ├── utils/
 │   └── package.json
 ├── vercel.json
 └── README.md
 ```
 
-## Setup
+## How To Run
 
-### 1. Backend
+### 1. Run the backend
 
 ```bash
 cd backend
@@ -52,11 +152,7 @@ pip install -e .
 python3 -m uvicorn main:app --reload --port 8000
 ```
 
-Backend requirements:
-
-- Python 3.12+
-
-### 2. Frontend
+### 2. Run the frontend
 
 ```bash
 cd frontend
@@ -66,23 +162,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000)
 
-## Environment Variables
+### 3. Run the CLI
 
-The news tab and sentiment analysis route require one of the following API keys in the frontend environment:
-
-```bash
-FINNHUB_API_KEY=your_key_here
-```
-
-or
+You can also analyze up to 3 stocks directly from the terminal:
 
 ```bash
-NEWS_API_KEY=your_key_here
+cd backend
+python3 cli.py AAPL MSFT GOOGL
 ```
 
-If no key is provided, the app stays functional and shows a graceful message for the news section.
-
-## Available UI Tabs
+## Dashboard Tabs
 
 - `Comparison`
 - `Price Charts`
@@ -90,67 +179,22 @@ If no key is provided, the app stays functional and shows a graceful message for
 - `Holders`
 - `Insights`
 - `News & Sentiment`
+- `Backtesting`
 
-## Backend API Overview
+## Demo
 
-Core routes in `backend/main.py`:
+Demo video:
 
-- `GET /health`
-- `GET /search-stock?query=AAPL`
-- `GET /stock-info/{symbol}`
-- `GET /compare?symbols=AAPL,MSFT`
-- `GET /financials/{symbol}?statement=income`
-- `GET /holders/{symbol}`
-- `GET /price-history/{symbol}?period=1y`
-- `GET /range-analysis/{symbol}`
-- `GET /recommendation/{symbol}`
-- `GET /screener`
+[StockAnalyzer Demo Video](https://youtu.be/5ghnGrWl-SA?si=wDY5NcEY-S8k7ASw)
 
-Frontend server route:
 
-- `GET /api/news-analysis?stock=AAPL`
+## Verification
 
-## Data Normalization Notes
+Backend syntax check:
 
-Several normalization fixes are built into the current version:
-
-- Dividend yield is normalized before display
-- Debt-to-equity and ROE use balance-sheet fallbacks when Yahoo summary fields are incomplete
-- 52-week range metrics are computed from 1-year OHLC history instead of Yahoo summary fields
-- Financial statements are standardized to a fixed display scale of `B`
-- Currency symbols are attached per stock, including `₹` for INR symbols
-
-## News and Sentiment
-
-The news pipeline works like this:
-
-1. Fetch recent news from Finnhub or NewsAPI
-2. Run article text through the `sentiment` package
-3. Classify each article as `Positive`, `Neutral`, or `Negative`
-4. Aggregate sentiment into an overall news signal
-5. Blend that signal into the recommendation view
-
-Current decision rule in the dashboard:
-
-- Positive sentiment + Uptrend => `BUY`
-- Negative sentiment + Downtrend => `SELL`
-- Otherwise => `HOLD`
-
-## Notes on Accuracy
-
-This project improves data accuracy as much as possible while still using `yfinance`, but some limitations remain:
-
-- Yahoo summary fields can be incomplete or inconsistent for some stocks
-- Some metrics are better sourced from financial statements than from `info`
-- News availability depends on the configured provider and API limits
-
-Where accuracy mattered most, the app now prefers:
-
-- historical OHLC data for 52-week calculations
-- balance-sheet rows for equity and debt-driven metrics
-- normalized financial statement scaling
-
-## Build Verification
+```bash
+python3 -m py_compile backend/main.py
+```
 
 Frontend production build:
 
@@ -159,23 +203,7 @@ cd frontend
 npm run build
 ```
 
-Backend syntax check:
+## Notes
 
-```bash
-python3 -m py_compile backend/main.py
-```
-
-## Deployment
-
-The repository includes a `vercel.json` that maps:
-
-- `frontend/` to `/`
-- `backend/main.py` to `/api`
-
-## Future Improvements
-
-- Backtesting engine
-- Real-time streaming pipeline
-- LLM-based stock summaries
-- Export and reporting
-- Sector and factor-based screening
+- StockAnalyzer uses live Yahoo Finance data, so results can vary slightly over time
+- the dashboard refreshes major analysis views every 60 seconds

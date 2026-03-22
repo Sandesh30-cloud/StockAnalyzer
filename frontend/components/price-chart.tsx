@@ -44,7 +44,7 @@ export function PriceChart({ symbols }: PriceChartProps) {
       const results = await Promise.all(urls.map((url: string) => fetcher(url)))
       return results
     },
-    { revalidateOnFocus: false }
+    { revalidateOnFocus: false, refreshInterval: 60000 }
   )
 
   if (symbols.length === 0) {
