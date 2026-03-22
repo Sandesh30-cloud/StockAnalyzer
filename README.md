@@ -185,7 +185,7 @@ python3 cli.py AAPL MSFT GOOGL
 
 Demo video:
 
-[StockAnalyzer Demo Video](https://youtu.be/5ghnGrWl-SA?si=wDY5NcEY-S8k7ASw)
+[![Watch the video](https://img.youtube.com/vi/sGFniWStJqI/maxresdefault.jpg)](https://youtu.be/sGFniWStJqI)
 
 
 ## Verification
