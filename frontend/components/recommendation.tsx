@@ -1,0 +1,452 @@
+'use client'
+
+import { useEffect, useMemo, useState } from 'react'
+import useSWR from 'swr'
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  AlertTriangle, 
+  CheckCircle, 
+  XCircle,
+  MinusCircle,
+  BarChart3,
+  Newspaper,
+  BrainCircuit
+} from 'lucide-react'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
+
+interface RecommendationProps {
+  symbols: string[]
+}
+
+interface Signal {
+  type: 'positive' | 'negative' | 'neutral' | 'warning'
+  message: string
+}
+
+interface RecommendationData {
+  symbol: string
+  name: string
+  longTerm: {
+    recommendation: string
+    score: number
+    signals: Signal[]
+  }
+  shortTerm: {
+    recommendation: string
+    score: number
+    signals: Signal[]
+  }
+  metrics: {
+    pe: number | null
+    forwardPE: number | null
+    roe: number | null
+    debtToEquity: number | null
+    dividendYield: number | null
+    beta: number | null
+    priceChange1m: number | null
+    priceChange3m: number | null
+    volumeTrend: number | null
+  }
+  error?: string
+}
+
+interface NewsAnalysisData {
+  overallSentiment: 'Positive' | 'Neutral' | 'Negative'
+  sentimentScore: number
+  articles: Array<{
+    title: string
+    url: string
+    sentiment: 'Positive' | 'Neutral' | 'Negative'
+  }>
+  error?: string
+}
+
+interface AIAnalysisData {
+  score: number | null
+  confidence: number | null
+  view: 'BUY' | 'HOLD' | 'SELL' | null
+  summary: string
+  bullishFactors: string[]
+  bearishFactors: string[]
+  error?: string
+}
+
+const fetcher = (url: string) => fetch(url).then((res) => res.json())
+
+const getRecommendationColor = (recommendation: string) => {
+  switch (recommendation) {
+    case 'Strong Buy':
+      return 'bg-success text-success-foreground'
+    case 'Buy':
+      return 'bg-success/80 text-success-foreground'
+    case 'Hold':
+      return 'bg-warning text-warning-foreground'
+    case 'Sell':
+      return 'bg-destructive/80 text-destructive-foreground'
+    case 'Strong Sell':
+      return 'bg-destructive text-destructive-foreground'
+    default:
+      return 'bg-muted text-muted-foreground'
+  }
+}
+
+const getSignalIcon = (type: string) => {
+  switch (type) {
+    case 'positive':
+      return <CheckCircle className="size-4 text-success" />
+    case 'negative':
+      return <XCircle className="size-4 text-destructive" />
+    case 'warning':
+      return <AlertTriangle className="size-4 text-warning" />
+    default:
+      return <MinusCircle className="size-4 text-muted-foreground" />
+  }
+}
+
+function MetricCard({ label, value, format }: { label: string; value: number | null; format?: (v: number) => string }) {
+  const formatValue = format || ((v: number) => v.toFixed(2))
+  
+  return (
+    <div className="bg-muted/50 rounded-xl p-4 border border-border/50">
+      <p className="text-xs text-muted-foreground font-medium">{label}</p>
+      <p className="font-mono font-semibold mt-1 tabular-nums">
+        {value !== null ? formatValue(value) : 'N/A'}
+      </p>
+    </div>
+  )
+}
+
+function getTrendLabel(metrics: RecommendationData['metrics'] | undefined) {
+  if (!metrics) return 'Sideways'
+
+  const { priceChange1m, priceChange3m } = metrics
+  if (
+    typeof priceChange1m === 'number' &&
+    typeof priceChange3m === 'number' &&
+    priceChange1m > 0 &&
+    priceChange3m > 0
+  ) {
+    return 'Uptrend'
+  }
+
+  if (
+    typeof priceChange1m === 'number' &&
+    typeof priceChange3m === 'number' &&
+    priceChange1m < 0 &&
+    priceChange3m < 0
+  ) {
+    return 'Downtrend'
+  }
+
+  return 'Sideways'
+}
+
+function getNewsDrivenAction(
+  sentiment: NewsAnalysisData['overallSentiment'],
+  trend: ReturnType<typeof getTrendLabel>,
+) {
+  if (sentiment === 'Positive' && trend === 'Uptrend') {
+    return 'BUY'
+  }
+
+  if (sentiment === 'Negative' && trend === 'Downtrend') {
+    return 'SELL'
+  }
+
+  return 'HOLD'
+}
+
+function getActionVariant(action: 'BUY' | 'SELL' | 'HOLD') {
+  if (action === 'BUY') return 'success'
+  if (action === 'SELL') return 'destructive'
+  return 'warning'
+}
+
+function buildSignalExplanation(
+  stockName: string,
+  sentiment: NewsAnalysisData['overallSentiment'],
+  trend: ReturnType<typeof getTrendLabel>,
+  action: 'BUY' | 'SELL' | 'HOLD',
+  articleCount: number,
+) {
+  if (articleCount === 0) {
+    return `No recent articles were available for ${stockName}, so the signal stays ${action} until news sentiment is available.`
+  }
+
+  if (action === 'BUY') {
+    return `Based on recent positive news and an upward trend, ${stockName} is a BUY.`
+  }
+
+  if (action === 'SELL') {
+    return `Based on recent negative news and a downward trend, ${stockName} is a SELL.`
+  }
+
+  return `${stockName} is a HOLD because the recent ${sentiment.toLowerCase()} news flow does not align with a clear ${trend.toLowerCase()} confirmation.`
+}
+
+export function Recommendation({ symbols }: RecommendationProps) {
+  const [selectedSymbol, setSelectedSymbol] = useState(symbols[0] || '')
+
+  useEffect(() => {
+    if (symbols.length > 0 && !symbols.includes(selectedSymbol)) {
+      setSelectedSymbol(symbols[0])
+    }
+  }, [selectedSymbol, symbols])
+
+  const { data, isLoading } = useSWR<RecommendationData>(
+    selectedSymbol ? `/api/recommendation/${selectedSymbol}` : null,
+    fetcher,
+    { revalidateOnFocus: false }
+  )
+  const { data: newsData } = useSWR<NewsAnalysisData>(
+    selectedSymbol ? `/api/news-analysis?stock=${selectedSymbol}` : null,
+    fetcher,
+    { revalidateOnFocus: false }
+  )
+  const { data: aiData, isLoading: isAiLoading } = useSWR<AIAnalysisData>(
+    selectedSymbol ? `/api/ai-analysis?stock=${selectedSymbol}` : null,
+    fetcher,
+    { revalidateOnFocus: false }
+  )
+
+  const trend = useMemo(() => getTrendLabel(data?.metrics), [data?.metrics])
+  const overallSentiment = newsData?.overallSentiment ?? 'Neutral'
+  const signalAction = getNewsDrivenAction(overallSentiment, trend)
+  const signalExplanation = buildSignalExplanation(
+    data?.name || selectedSymbol,
+    overallSentiment,
+    trend,
+    signalAction,
+    newsData?.articles?.length ?? 0,
+  )
+
+  if (symbols.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center py-12">
+          <p className="text-muted-foreground">
+            Select stocks to view recommendations
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Smart Recommendations</CardTitle>
+          <CardDescription>Loading analysis...</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (data?.error) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center py-12">
+          <p className="text-destructive">{data.error}</p>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="size-5" />
+              Smart Recommendations
+            </CardTitle>
+            <CardDescription>
+              AI-powered investment insights for {data?.name || selectedSymbol}
+            </CardDescription>
+          </div>
+          <Select value={selectedSymbol} onValueChange={setSelectedSymbol}>
+            <SelectTrigger className="w-[120px]">
+              <SelectValue placeholder="Select stock" />
+            </SelectTrigger>
+            <SelectContent>
+              {symbols.map((symbol) => (
+                <SelectItem key={symbol} value={symbol}>
+                  {symbol}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="rounded-2xl border border-border/50 bg-muted/30 p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <BrainCircuit className="size-4 text-primary" />
+                <h4 className="font-medium">From-Scratch AI Engine</h4>
+              </div>
+              {isAiLoading ? (
+                <div className="space-y-2 pt-2">
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-[90%]" />
+                  <Skeleton className="h-4 w-[78%]" />
+                </div>
+              ) : aiData?.summary ? (
+                <div className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+                  {aiData.summary}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {aiData?.error || 'AI analysis is not available right now.'}
+                </p>
+              )}
+            </div>
+            {aiData?.view && (
+              <div className="flex flex-col items-end gap-2">
+                <Badge className="text-sm px-3 py-1" variant={getActionVariant(aiData.view)}>
+                  {aiData.view}
+                </Badge>
+                {typeof aiData.score === 'number' && (
+                  <Badge variant="outline">Score: {aiData.score}/100</Badge>
+                )}
+                {typeof aiData.confidence === 'number' && (
+                  <Badge variant="outline">Confidence: {aiData.confidence}%</Badge>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Newspaper className="size-4 text-primary" />
+                <h4 className="font-medium">News-Adjusted Signal</h4>
+              </div>
+              <p className="text-sm text-muted-foreground">{signalExplanation}</p>
+            </div>
+            <Badge className="text-sm px-3 py-1" variant={getActionVariant(signalAction)}>
+              {signalAction}
+            </Badge>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Badge variant={overallSentiment === 'Positive' ? 'success' : overallSentiment === 'Negative' ? 'destructive' : 'warning'}>
+              Sentiment: {overallSentiment}
+            </Badge>
+            <Badge variant="outline">Trend: {trend}</Badge>
+            <Badge variant="outline">Articles: {newsData?.articles?.length ?? 0}</Badge>
+          </div>
+          {newsData?.error && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              News sentiment unavailable: {newsData.error}
+            </p>
+          )}
+        </div>
+
+        {/* Recommendation Badges */}
+        <div className="grid gap-4 md:grid-cols-2">
+          {/* Long Term */}
+          <div className="border border-border/50 rounded-xl p-5 bg-card">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="size-5 text-muted-foreground" />
+                <h4 className="font-medium">Long-Term Outlook</h4>
+              </div>
+              <Badge className={cn("text-sm px-3 py-1", getRecommendationColor(data?.longTerm?.recommendation || ''))}>
+                {data?.longTerm?.recommendation || 'N/A'}
+              </Badge>
+            </div>
+            <div className="space-y-2">
+              {data?.longTerm?.signals?.map((signal, index) => (
+                <div key={index} className="flex items-start gap-2 text-sm">
+                  {getSignalIcon(signal.type)}
+                  <span className="text-muted-foreground">{signal.message}</span>
+                </div>
+              ))}
+              {(!data?.longTerm?.signals || data.longTerm.signals.length === 0) && (
+                <p className="text-sm text-muted-foreground">No signals available</p>
+              )}
+            </div>
+          </div>
+
+          {/* Short Term */}
+          <div className="border border-border/50 rounded-xl p-5 bg-card">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <TrendingDown className="size-5 text-muted-foreground" />
+                <h4 className="font-medium">Short-Term Outlook</h4>
+              </div>
+              <Badge className={cn("text-sm px-3 py-1", getRecommendationColor(data?.shortTerm?.recommendation || ''))}>
+                {data?.shortTerm?.recommendation || 'N/A'}
+              </Badge>
+            </div>
+            <div className="space-y-2">
+              {data?.shortTerm?.signals?.map((signal, index) => (
+                <div key={index} className="flex items-start gap-2 text-sm">
+                  {getSignalIcon(signal.type)}
+                  <span className="text-muted-foreground">{signal.message}</span>
+                </div>
+              ))}
+              {(!data?.shortTerm?.signals || data.shortTerm.signals.length === 0) && (
+                <p className="text-sm text-muted-foreground">No signals available</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Key Metrics Grid */}
+        <div>
+          <h4 className="font-medium mb-3">Key Metrics</h4>
+          <div className="grid grid-cols-3 gap-3 md:grid-cols-5">
+            <MetricCard label="P/E Ratio" value={data?.metrics?.pe ?? null} />
+            <MetricCard label="Forward P/E" value={data?.metrics?.forwardPE ?? null} />
+            <MetricCard label="ROE" value={data?.metrics?.roe ?? null} format={(v) => `${v.toFixed(1)}%`} />
+            <MetricCard label="D/E Ratio" value={data?.metrics?.debtToEquity ?? null} />
+            <MetricCard label="Beta" value={data?.metrics?.beta ?? null} />
+            <MetricCard 
+              label="1M Change" 
+              value={data?.metrics?.priceChange1m ?? null} 
+              format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`} 
+            />
+            <MetricCard 
+              label="3M Change" 
+              value={data?.metrics?.priceChange3m ?? null} 
+              format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`} 
+            />
+            <MetricCard 
+              label="Vol Trend" 
+              value={data?.metrics?.volumeTrend ?? null} 
+              format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`} 
+            />
+            <MetricCard 
+              label="Div Yield" 
+              value={data?.metrics?.dividendYield ?? null} 
+              format={(v) => `${(v * 100).toFixed(2)}%`} 
+            />
+          </div>
+        </div>
+
+        {/* Disclaimer */}
+        <p className="text-xs text-muted-foreground border-t pt-4">
+          Disclaimer: These recommendations are based on algorithmic analysis of financial metrics and historical data. 
+          They should not be considered as financial advice. Always conduct your own research before making investment decisions.
+        </p>
+      </CardContent>
+    </Card>
+  )
+}
