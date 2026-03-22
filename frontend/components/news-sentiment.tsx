@@ -60,7 +60,7 @@ export function NewsSentiment({ symbols }: NewsSentimentProps) {
   }, [selectedSymbol, symbols])
 
   const { data, isLoading } = useSWR<NewsAnalysisResponse>(
-    selectedSymbol ? `/api/news-analysis?stock=${selectedSymbol}` : null,
+    selectedSymbol ? `/api/news-analysis/${selectedSymbol}` : null,
     fetcher,
     { revalidateOnFocus: false },
   )
@@ -140,7 +140,7 @@ export function NewsSentiment({ symbols }: NewsSentimentProps) {
 
         {data?.error && (
           <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning-foreground">
-            {data.error}. Add `FINNHUB_API_KEY` or `NEWS_API_KEY` in the frontend environment to enable live news.
+            {data.error}. News is now sourced from Yahoo Finance through the backend.
           </div>
         )}
 

@@ -204,12 +204,12 @@ export function Recommendation({ symbols }: RecommendationProps) {
     { revalidateOnFocus: false }
   )
   const { data: newsData } = useSWR<NewsAnalysisData>(
-    selectedSymbol ? `/api/news-analysis?stock=${selectedSymbol}` : null,
+    selectedSymbol ? `/api/news-analysis/${selectedSymbol}` : null,
     fetcher,
     { revalidateOnFocus: false }
   )
   const { data: aiData, isLoading: isAiLoading } = useSWR<AIAnalysisData>(
-    selectedSymbol ? `/api/ai-analysis?stock=${selectedSymbol}` : null,
+    selectedSymbol ? `/api/ai-analysis/${selectedSymbol}` : null,
     fetcher,
     { revalidateOnFocus: false }
   )

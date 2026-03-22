@@ -18,6 +18,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+POSITIVE_NEWS_TERMS = {
+    "beat", "growth", "surge", "gain", "record", "upgrade", "bullish", "profit",
+    "strong", "expand", "rebound", "outperform", "innovation", "partnership", "approval",
+}
+
+NEGATIVE_NEWS_TERMS = {
+    "miss", "drop", "fall", "weak", "downgrade", "bearish", "lawsuit", "risk",
+    "decline", "warning", "cut", "loss", "slowdown", "investigation", "recall",
+}
+
 
 STATEMENT_SCALE_LABEL = "B"
 STATEMENT_SCALE_DIVISOR = 1e9
@@ -214,6 +224,366 @@ def compute_52_week_range(hist: pd.DataFrame):
         "range_position_percent": round(range_position * 100, 2),
         "drawdown_percent": round(drawdown * 100, 2),
     }
+
+
+def tokenize_text(text: str) -> list[str]:
+    normalized = "".join(ch.lower() if ch.isalnum() else " " for ch in text or "")
+    return [token for token in normalized.split() if token]
+
+
+def classify_sentiment_score(score: int) -> str:
+    if score > 1:
+        return "Positive"
+    if score < -1:
+        return "Negative"
+    return "Neutral"
+
+
+def analyze_news_articles(articles: list[dict]) -> list[dict]:
+    analyzed = []
+    for article in articles:
+        text = f"{article.get('title', '')} {article.get('description', '')}".strip()
+        tokens = tokenize_text(text)
+        positive_matches = sum(1 for token in tokens if token in POSITIVE_NEWS_TERMS)
+        negative_matches = sum(1 for token in tokens if token in NEGATIVE_NEWS_TERMS)
+        sentiment_score = positive_matches - negative_matches
+        analyzed.append({
+            **article,
+            "sentiment": classify_sentiment_score(sentiment_score),
+            "sentimentScore": sentiment_score,
+        })
+    return analyzed
+
+
+def aggregate_news_sentiment(articles: list[dict]) -> dict:
+    counts = {"positive": 0, "neutral": 0, "negative": 0}
+    sentiment_score = 0
+
+    for article in articles:
+        sentiment = article.get("sentiment")
+        if sentiment == "Positive":
+            counts["positive"] += 1
+            sentiment_score += 1
+        elif sentiment == "Negative":
+            counts["negative"] += 1
+            sentiment_score -= 1
+        else:
+            counts["neutral"] += 1
+
+    overall = "Neutral"
+    if sentiment_score > 0:
+        overall = "Positive"
+    elif sentiment_score < 0:
+        overall = "Negative"
+
+    return {
+        "overallSentiment": overall,
+        "sentimentScore": sentiment_score,
+        "counts": counts,
+    }
+
+
+def compute_trend_metrics(hist: pd.DataFrame) -> dict:
+    price_change_1m = None
+    price_change_3m = None
+    volume_trend = None
+
+    if not hist.empty and len(hist) > 20:
+        current_price = hist["Close"].iloc[-1]
+
+        if len(hist) >= 22:
+            price_1m_ago = hist["Close"].iloc[-22]
+            price_change_1m = ((current_price - price_1m_ago) / price_1m_ago) * 100
+
+        if len(hist) >= 66:
+            price_3m_ago = hist["Close"].iloc[-66]
+            price_change_3m = ((current_price - price_3m_ago) / price_3m_ago) * 100
+
+        recent_vol = hist["Volume"].iloc[-5:].mean()
+        older_vol = hist["Volume"].iloc[-22:-5].mean()
+        if older_vol > 0:
+            volume_trend = ((recent_vol - older_vol) / older_vol) * 100
+
+    return {
+        "priceChange1m": round(price_change_1m, 2) if price_change_1m is not None else None,
+        "priceChange3m": round(price_change_3m, 2) if price_change_3m is not None else None,
+        "volumeTrend": round(volume_trend, 2) if volume_trend is not None else None,
+    }
+
+
+def get_trend_label(metrics: dict) -> str:
+    price_change_1m = metrics.get("priceChange1m")
+    price_change_3m = metrics.get("priceChange3m")
+
+    if (
+        isinstance(price_change_1m, (int, float))
+        and isinstance(price_change_3m, (int, float))
+        and price_change_1m > 0
+        and price_change_3m > 0
+    ):
+        return "Uptrend"
+
+    if (
+        isinstance(price_change_1m, (int, float))
+        and isinstance(price_change_3m, (int, float))
+        and price_change_1m < 0
+        and price_change_3m < 0
+    ):
+        return "Downtrend"
+
+    return "Sideways"
+
+
+def build_recommendation_payload(symbol: str, info: dict, balance_sheet: Optional[pd.DataFrame], hist: pd.DataFrame) -> dict:
+    pe = safe_get(info, "trailingPE")
+    forward_pe = safe_get(info, "forwardPE")
+    roe = get_roe(info, balance_sheet)
+    debt_to_equity = get_debt_to_equity(info, balance_sheet)
+    dividend_yield = get_dividend_yield(info)
+    beta = safe_get(info, "beta")
+    trend_metrics = compute_trend_metrics(hist)
+
+    long_term_signals = []
+    short_term_signals = []
+    long_term_score = 0
+    short_term_score = 0
+
+    if roe is not None:
+        if roe > 15:
+            long_term_signals.append({"type": "positive", "message": f"Strong ROE of {roe:.1f}% indicates efficient use of equity"})
+            long_term_score += 2
+        elif roe > 10:
+            long_term_signals.append({"type": "neutral", "message": f"Moderate ROE of {roe:.1f}%"})
+            long_term_score += 1
+        else:
+            long_term_signals.append({"type": "negative", "message": f"Low ROE of {roe:.1f}% may indicate inefficiency"})
+            long_term_score -= 1
+
+    if debt_to_equity is not None:
+        if debt_to_equity < 0.5:
+            long_term_signals.append({"type": "positive", "message": f"Low debt-to-equity ratio of {debt_to_equity:.2f} indicates financial stability"})
+            long_term_score += 2
+        elif debt_to_equity < 1:
+            long_term_signals.append({"type": "neutral", "message": f"Moderate debt-to-equity ratio of {debt_to_equity:.2f}"})
+            long_term_score += 1
+        else:
+            long_term_signals.append({"type": "negative", "message": f"High debt-to-equity ratio of {debt_to_equity:.2f} may pose risks"})
+            long_term_score -= 1
+
+    if pe is not None and forward_pe is not None:
+        if forward_pe < pe:
+            long_term_signals.append({"type": "positive", "message": f"Forward P/E ({forward_pe:.1f}) lower than trailing P/E ({pe:.1f}) suggests expected earnings growth"})
+            long_term_score += 1
+        elif forward_pe > pe * 1.2:
+            long_term_signals.append({"type": "negative", "message": f"Forward P/E ({forward_pe:.1f}) higher than trailing P/E ({pe:.1f}) suggests expected earnings decline"})
+            long_term_score -= 1
+
+    if dividend_yield is not None and dividend_yield > 0.02:
+        long_term_signals.append({"type": "positive", "message": f"Dividend yield of {dividend_yield*100:.2f}% provides income"})
+        long_term_score += 1
+
+    price_change_1m = trend_metrics["priceChange1m"]
+    price_change_3m = trend_metrics["priceChange3m"]
+    volume_trend = trend_metrics["volumeTrend"]
+
+    if price_change_1m is not None:
+        if price_change_1m > 5:
+            short_term_signals.append({"type": "positive", "message": f"Strong 1-month momentum: +{price_change_1m:.1f}%"})
+            short_term_score += 2
+        elif price_change_1m < -5:
+            short_term_signals.append({"type": "negative", "message": f"Weak 1-month momentum: {price_change_1m:.1f}%"})
+            short_term_score -= 1
+        else:
+            short_term_signals.append({"type": "neutral", "message": f"Flat 1-month price movement: {price_change_1m:.1f}%"})
+
+    if volume_trend is not None:
+        if volume_trend > 20:
+            short_term_signals.append({"type": "positive", "message": f"Volume spike: +{volume_trend:.1f}% above average (increased interest)"})
+            short_term_score += 1
+        elif volume_trend < -20:
+            short_term_signals.append({"type": "negative", "message": f"Declining volume: {volume_trend:.1f}% (reduced interest)"})
+            short_term_score -= 1
+
+    if beta is not None:
+        if beta > 1.5:
+            short_term_signals.append({"type": "warning", "message": f"High beta of {beta:.2f} indicates high volatility"})
+        elif beta < 0.8:
+            short_term_signals.append({"type": "neutral", "message": f"Low beta of {beta:.2f} indicates lower volatility than market"})
+
+    def get_recommendation_text(score):
+        if score >= 4:
+            return "Strong Buy"
+        elif score >= 2:
+            return "Buy"
+        elif score >= 0:
+            return "Hold"
+        elif score >= -2:
+            return "Sell"
+        else:
+            return "Strong Sell"
+
+    return {
+        "symbol": symbol,
+        "name": safe_get(info, "longName", symbol),
+        "longTerm": {
+            "recommendation": get_recommendation_text(long_term_score),
+            "score": long_term_score,
+            "signals": long_term_signals,
+        },
+        "shortTerm": {
+            "recommendation": get_recommendation_text(short_term_score),
+            "score": short_term_score,
+            "signals": short_term_signals,
+        },
+        "metrics": {
+            "pe": pe,
+            "forwardPE": forward_pe,
+            "roe": roe,
+            "debtToEquity": debt_to_equity,
+            "dividendYield": dividend_yield,
+            "beta": beta,
+            **trend_metrics,
+        }
+    }
+
+
+def build_ai_analysis(payload: dict, news_analysis: dict, stock_info: dict) -> dict:
+    metrics = payload["metrics"]
+    score = 50
+    bullish = []
+    bearish = []
+
+    roe = metrics.get("roe")
+    if isinstance(roe, (int, float)):
+        if roe >= 20:
+            score += 14
+            bullish.append(f"Strong ROE of {roe:.1f}%")
+        elif roe >= 12:
+            score += 8
+            bullish.append(f"Healthy ROE of {roe:.1f}%")
+        elif roe < 6:
+            score -= 10
+            bearish.append(f"Low ROE of {roe:.1f}%")
+
+    debt_to_equity = metrics.get("debtToEquity")
+    if isinstance(debt_to_equity, (int, float)):
+        if debt_to_equity <= 0.5:
+            score += 10
+            bullish.append(f"Low debt-to-equity at {debt_to_equity:.2f}")
+        elif debt_to_equity >= 2:
+            score -= 12
+            bearish.append(f"High debt-to-equity at {debt_to_equity:.2f}")
+
+    pe = metrics.get("pe")
+    forward_pe = metrics.get("forwardPE")
+    if isinstance(pe, (int, float)) and isinstance(forward_pe, (int, float)):
+        if forward_pe < pe:
+            score += 6
+            bullish.append("Forward P/E is below trailing P/E")
+        elif forward_pe > pe * 1.2:
+            score -= 6
+            bearish.append("Forward P/E is materially above trailing P/E")
+
+    price_change_3m = metrics.get("priceChange3m")
+    if isinstance(price_change_3m, (int, float)):
+        if price_change_3m >= 10:
+            score += 12
+            bullish.append(f"Strong 3-month momentum at +{price_change_3m:.1f}%")
+        elif price_change_3m > 0:
+            score += 5
+            bullish.append(f"Positive 3-month momentum at +{price_change_3m:.1f}%")
+        elif price_change_3m <= -10:
+            score -= 12
+            bearish.append(f"Weak 3-month momentum at {price_change_3m:.1f}%")
+        elif price_change_3m < 0:
+            score -= 5
+            bearish.append(f"Negative 3-month momentum at {price_change_3m:.1f}%")
+
+    price_change_1m = metrics.get("priceChange1m")
+    if isinstance(price_change_1m, (int, float)):
+        if price_change_1m >= 4:
+            score += 4
+        elif price_change_1m <= -4:
+            score -= 4
+
+    overall_sentiment = news_analysis.get("overallSentiment", "Neutral")
+    if overall_sentiment == "Positive":
+        score += 10
+        bullish.append(f"Recent news flow is positive across {len(news_analysis.get('articles', []))} articles")
+    elif overall_sentiment == "Negative":
+        score -= 10
+        bearish.append(f"Recent news flow is negative across {len(news_analysis.get('articles', []))} articles")
+
+    dividend_yield = metrics.get("dividendYield")
+    if isinstance(dividend_yield, (int, float)) and dividend_yield >= 0.02:
+        score += 4
+        bullish.append(f"Dividend yield of {dividend_yield * 100:.2f}% supports shareholder returns")
+
+    beta = metrics.get("beta")
+    if isinstance(beta, (int, float)) and beta >= 1.7:
+        score -= 4
+        bearish.append(f"High beta of {beta:.2f} increases volatility risk")
+
+    score = max(0, min(100, score))
+    view = "BUY" if score >= 65 else "SELL" if score <= 35 else "HOLD"
+    confidence = max(45, min(92, round(45 + abs(score - 50) * 1.2)))
+
+    summary_lines = [
+        "Outlook",
+        f"{payload.get('name', stock_info.get('name', payload.get('symbol')))} currently scores {score}/100 in the local Python AI engine, which results in a {view} view with {confidence}% confidence.",
+        "",
+        "Drivers",
+        *(f"- {item}" for item in (bullish[:3] or ["No strong bullish drivers were detected from the available data."])),
+        "",
+        "Risks",
+        *(f"- {item}" for item in (bearish[:3] or ["No major risk signal stood out in the current dataset."])),
+        "",
+        f"AI View: {view}",
+    ]
+
+    return {
+        "stock": payload["symbol"],
+        "score": score,
+        "confidence": confidence,
+        "view": view,
+        "summary": "\n".join(summary_lines),
+        "bullishFactors": bullish,
+        "bearishFactors": bearish,
+        "meta": {
+            "price": stock_info.get("price"),
+            "dailyChange": stock_info.get("change"),
+            "newsSentiment": overall_sentiment,
+            "articleCount": len(news_analysis.get("articles", [])),
+            "trend": get_trend_label(metrics),
+        },
+    }
+
+
+def extract_yahoo_news_articles(symbol: str, limit: int = 8) -> list[dict]:
+    """Normalize Yahoo Finance news items for reuse across endpoints."""
+    ticker = yf.Ticker(symbol)
+    news_items = ticker.news or []
+    articles = []
+
+    for item in news_items[: max(1, min(limit, 10))]:
+        content = item.get("content", {})
+        canonical_url = content.get("canonicalUrl", {})
+        provider = content.get("provider", {})
+
+        url = canonical_url.get("url")
+        title = content.get("title")
+        if not url or not title:
+            continue
+
+        articles.append({
+            "title": title,
+            "description": content.get("summary") or content.get("description") or "",
+            "url": url,
+            "publishedAt": content.get("pubDate") or content.get("displayTime"),
+            "provider": provider.get("displayName"),
+        })
+
+    return articles
 
 
 @app.get("/health")
@@ -514,34 +884,37 @@ async def get_holders(symbol: str):
 async def get_news(symbol: str, limit: int = 8):
     """Get latest Yahoo Finance news articles for a symbol."""
     try:
-        ticker = yf.Ticker(symbol)
-        news_items = ticker.news or []
-        articles = []
-
-        for item in news_items[: max(1, min(limit, 10))]:
-            content = item.get("content", {})
-            canonical_url = content.get("canonicalUrl", {})
-            provider = content.get("provider", {})
-
-            url = canonical_url.get("url")
-            title = content.get("title")
-            if not url or not title:
-                continue
-
-            articles.append({
-                "title": title,
-                "description": content.get("summary") or content.get("description") or "",
-                "url": url,
-                "publishedAt": content.get("pubDate") or content.get("displayTime"),
-                "provider": provider.get("displayName"),
-            })
-
+        articles = extract_yahoo_news_articles(symbol, limit)
         return {
             "symbol": symbol,
             "articles": articles,
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/news-analysis/{symbol}")
+async def get_news_analysis(symbol: str, limit: int = 8):
+    """Run from-scratch Python sentiment analysis on Yahoo Finance news."""
+    try:
+        articles = analyze_news_articles(extract_yahoo_news_articles(symbol, limit))
+        aggregate = aggregate_news_sentiment(articles)
+        return {
+            "stock": symbol,
+            "overallSentiment": aggregate["overallSentiment"],
+            "sentimentScore": aggregate["sentimentScore"],
+            "counts": aggregate["counts"],
+            "articles": articles,
+        }
+    except Exception as e:
+        return {
+            "stock": symbol,
+            "overallSentiment": "Neutral",
+            "sentimentScore": 0,
+            "counts": {"positive": 0, "neutral": 0, "negative": 0},
+            "articles": [],
+            "error": str(e),
+        }
 
 
 @app.get("/price-history/{symbol}")
@@ -595,150 +968,52 @@ async def get_range_analysis(symbol: str):
 
 @app.get("/recommendation/{symbol}")
 async def get_recommendation(symbol: str):
-    """Get AI-driven stock recommendations"""
+    """Get Python-based stock recommendations from local analysis logic."""
     try:
         ticker = yf.Ticker(symbol)
         info = ticker.info
         balance_sheet = ticker.balance_sheet
-        hist = ticker.history(period="1y")
-        
-        # Gather metrics for analysis
-        pe = safe_get(info, "trailingPE")
-        forward_pe = safe_get(info, "forwardPE")
-        eps = safe_get(info, "trailingEps")
-        roe = get_roe(info, balance_sheet)
-        debt_to_equity = get_debt_to_equity(info, balance_sheet)
-        dividend_yield = get_dividend_yield(info)
-        beta = safe_get(info, "beta")
-        
-        # Calculate price momentum (short-term)
-        price_change_1m = None
-        price_change_3m = None
-        volume_trend = None
-        
-        if not hist.empty and len(hist) > 20:
-            current_price = hist["Close"].iloc[-1]
-            
-            if len(hist) >= 22:
-                price_1m_ago = hist["Close"].iloc[-22]
-                price_change_1m = ((current_price - price_1m_ago) / price_1m_ago) * 100
-            
-            if len(hist) >= 66:
-                price_3m_ago = hist["Close"].iloc[-66]
-                price_change_3m = ((current_price - price_3m_ago) / price_3m_ago) * 100
-            
-            # Volume trend
-            recent_vol = hist["Volume"].iloc[-5:].mean()
-            older_vol = hist["Volume"].iloc[-22:-5].mean()
-            if older_vol > 0:
-                volume_trend = ((recent_vol - older_vol) / older_vol) * 100
-        
-        # Generate recommendations
-        long_term_signals = []
-        short_term_signals = []
-        long_term_score = 0
-        short_term_score = 0
-        
-        # Long-term analysis
-        if roe is not None:
-            if roe > 15:
-                long_term_signals.append({"type": "positive", "message": f"Strong ROE of {roe:.1f}% indicates efficient use of equity"})
-                long_term_score += 2
-            elif roe > 10:
-                long_term_signals.append({"type": "neutral", "message": f"Moderate ROE of {roe:.1f}%"})
-                long_term_score += 1
-            else:
-                long_term_signals.append({"type": "negative", "message": f"Low ROE of {roe:.1f}% may indicate inefficiency"})
-                long_term_score -= 1
-        
-        if debt_to_equity is not None:
-            if debt_to_equity < 0.5:
-                long_term_signals.append({"type": "positive", "message": f"Low debt-to-equity ratio of {debt_to_equity:.2f} indicates financial stability"})
-                long_term_score += 2
-            elif debt_to_equity < 1:
-                long_term_signals.append({"type": "neutral", "message": f"Moderate debt-to-equity ratio of {debt_to_equity:.2f}"})
-                long_term_score += 1
-            else:
-                long_term_signals.append({"type": "negative", "message": f"High debt-to-equity ratio of {debt_to_equity:.2f} may pose risks"})
-                long_term_score -= 1
-        
-        if pe is not None and forward_pe is not None:
-            if forward_pe < pe:
-                long_term_signals.append({"type": "positive", "message": f"Forward P/E ({forward_pe:.1f}) lower than trailing P/E ({pe:.1f}) suggests expected earnings growth"})
-                long_term_score += 1
-            elif forward_pe > pe * 1.2:
-                long_term_signals.append({"type": "negative", "message": f"Forward P/E ({forward_pe:.1f}) higher than trailing P/E ({pe:.1f}) suggests expected earnings decline"})
-                long_term_score -= 1
-        
-        if dividend_yield is not None and dividend_yield > 0.02:
-            long_term_signals.append({"type": "positive", "message": f"Dividend yield of {dividend_yield*100:.2f}% provides income"})
-            long_term_score += 1
-        
-        # Short-term analysis
-        if price_change_1m is not None:
-            if price_change_1m > 5:
-                short_term_signals.append({"type": "positive", "message": f"Strong 1-month momentum: +{price_change_1m:.1f}%"})
-                short_term_score += 2
-            elif price_change_1m < -5:
-                short_term_signals.append({"type": "negative", "message": f"Weak 1-month momentum: {price_change_1m:.1f}%"})
-                short_term_score -= 1
-            else:
-                short_term_signals.append({"type": "neutral", "message": f"Flat 1-month price movement: {price_change_1m:.1f}%"})
-        
-        if volume_trend is not None:
-            if volume_trend > 20:
-                short_term_signals.append({"type": "positive", "message": f"Volume spike: +{volume_trend:.1f}% above average (increased interest)"})
-                short_term_score += 1
-            elif volume_trend < -20:
-                short_term_signals.append({"type": "negative", "message": f"Declining volume: {volume_trend:.1f}% (reduced interest)"})
-                short_term_score -= 1
-        
-        if beta is not None:
-            if beta > 1.5:
-                short_term_signals.append({"type": "warning", "message": f"High beta of {beta:.2f} indicates high volatility"})
-            elif beta < 0.8:
-                short_term_signals.append({"type": "neutral", "message": f"Low beta of {beta:.2f} indicates lower volatility than market"})
-        
-        # Generate overall recommendation
-        def get_recommendation_text(score):
-            if score >= 4:
-                return "Strong Buy"
-            elif score >= 2:
-                return "Buy"
-            elif score >= 0:
-                return "Hold"
-            elif score >= -2:
-                return "Sell"
-            else:
-                return "Strong Sell"
-        
-        return {
-            "symbol": symbol,
-            "name": safe_get(info, "longName", symbol),
-            "longTerm": {
-                "recommendation": get_recommendation_text(long_term_score),
-                "score": long_term_score,
-                "signals": long_term_signals,
-            },
-            "shortTerm": {
-                "recommendation": get_recommendation_text(short_term_score),
-                "score": short_term_score,
-                "signals": short_term_signals,
-            },
-            "metrics": {
-                "pe": pe,
-                "forwardPE": forward_pe,
-                "roe": roe,
-                "debtToEquity": debt_to_equity,
-                "dividendYield": dividend_yield,
-                "beta": beta,
-                "priceChange1m": round(price_change_1m, 2) if price_change_1m is not None else None,
-                "priceChange3m": round(price_change_3m, 2) if price_change_3m is not None else None,
-                "volumeTrend": round(volume_trend, 2) if volume_trend is not None else None,
-            }
-        }
+        hist = get_one_year_history(ticker)
+        return build_recommendation_payload(symbol, info, balance_sheet, hist)
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/ai-analysis/{symbol}")
+async def get_ai_analysis(symbol: str):
+    """Run the local Python AI engine for reasoning and BUY/SELL/HOLD output."""
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.info
+        balance_sheet = ticker.balance_sheet
+        hist = get_one_year_history(ticker)
+
+        recommendation_payload = build_recommendation_payload(symbol, info, balance_sheet, hist)
+        news_articles = analyze_news_articles(extract_yahoo_news_articles(symbol, 8))
+        news_aggregate = aggregate_news_sentiment(news_articles)
+        news_analysis = {
+            **news_aggregate,
+            "articles": news_articles,
+        }
+        stock_info = {
+            "symbol": symbol,
+            "name": safe_get(info, "longName", symbol),
+            "price": safe_get(info, "regularMarketPrice"),
+            "change": safe_get(info, "regularMarketChangePercent"),
+        }
+
+        return build_ai_analysis(recommendation_payload, news_analysis, stock_info)
+    except Exception as e:
+        return {
+            "stock": symbol,
+            "score": None,
+            "confidence": None,
+            "view": None,
+            "summary": "",
+            "bullishFactors": [],
+            "bearishFactors": [],
+            "error": str(e),
+        }
 
 
 @app.get("/screener")
