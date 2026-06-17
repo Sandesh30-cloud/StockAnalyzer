@@ -18,6 +18,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import SpotlightCard from '@/components/SpotlightCard'
+import ShinyText from '@/components/ShinyText'
+import CountUp from '@/components/CountUp'
 
 interface RecommendationProps {
   symbols: string[]
@@ -271,14 +274,20 @@ export function Recommendation({ symbols }: RecommendationProps) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <BarChart3 className="size-5" />
-              Smart Recommendations
-            </CardTitle>
+    <SpotlightCard className="p-0" spotlightColor="rgba(52, 211, 153, 0.1)">
+      <Card className="border-0 bg-transparent shadow-none">
+        <CardHeader>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <BarChart3 className="size-5" />
+                <ShinyText
+                  text="Smart Recommendations"
+                  speed={3}
+                  color="oklch(0.96 0.01 250)"
+                  shineColor="oklch(0.75 0.18 165)"
+                />
+              </CardTitle>
             <CardDescription>
               AI-powered investment insights for {data?.name || selectedSymbol}
             </CardDescription>
@@ -298,7 +307,7 @@ export function Recommendation({ symbols }: RecommendationProps) {
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        <div className="rounded-2xl border border-border/50 bg-muted/30 p-5">
+        <SpotlightCard className="p-5" spotlightColor="rgba(52, 211, 153, 0.08)">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div className="space-y-2">
               <div className="flex items-center gap-2">
@@ -327,15 +336,19 @@ export function Recommendation({ symbols }: RecommendationProps) {
                   {aiData.view}
                 </Badge>
                 {typeof aiData.score === 'number' && (
-                  <Badge variant="outline">Score: {aiData.score}/100</Badge>
+                  <Badge variant="outline">
+                    Score: <CountUp to={aiData.score} duration={1.5} className="font-mono" />/100
+                  </Badge>
                 )}
                 {typeof aiData.confidence === 'number' && (
-                  <Badge variant="outline">Confidence: {aiData.confidence}%</Badge>
+                  <Badge variant="outline">
+                    Confidence: <CountUp to={aiData.confidence} duration={1.2} className="font-mono" />%
+                  </Badge>
                 )}
               </div>
             )}
           </div>
-        </div>
+        </SpotlightCard>
 
         <div className="rounded-2xl border border-primary/20 bg-primary/5 p-5">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -466,6 +479,7 @@ export function Recommendation({ symbols }: RecommendationProps) {
           They should not be considered as financial advice. Always conduct your own research before making investment decisions.
         </p>
       </CardContent>
-    </Card>
+      </Card>
+    </SpotlightCard>
   )
 }

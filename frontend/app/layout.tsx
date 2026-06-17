@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Plus_Jakarta_Sans, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import { Toaster } from 'sonner'
+import { DisableContextMenu } from '@/components/disable-context-menu'
 
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
@@ -23,8 +24,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${jakarta.variable} ${jetbrainsMono.variable} font-sans antialiased`}>
+        <DisableContextMenu />
         {children}
-        <Toaster theme="dark" position="bottom-right" />
+        <Toaster theme="dark" position="bottom-right" richColors />
       </body>
     </html>
   )

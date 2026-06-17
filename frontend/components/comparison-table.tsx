@@ -7,6 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import SpotlightCard from '@/components/SpotlightCard'
+import CountUp from '@/components/CountUp'
 
 interface ComparisonStock {
   symbol: string
@@ -157,41 +159,61 @@ export function ComparisonTable({ symbols }: ComparisonTableProps) {
   ]
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Stock Comparison</CardTitle>
-        <CardDescription>
-          Side-by-side comparison of key financial metrics
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-6 overflow-x-auto">
-        <div className="grid gap-3 md:grid-cols-2">
-          <div className="rounded-xl border border-border/50 bg-muted/30 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Trophy className="size-4 text-warning" />
-              Best Overall Setup
-            </div>
-            <p className="mt-2 text-2xl font-semibold">
-              {bestScore?.symbol ?? 'N/A'}
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Based on stronger ROE with lighter valuation and leverage.
-            </p>
-          </div>
+    <SpotlightCard className="p-0" spotlightColor="rgba(52, 211, 153, 0.1)">
+      <Card className="border-0 bg-transparent shadow-none">
+        <CardHeader>
+          <CardTitle>Stock Comparison</CardTitle>
+          <CardDescription>
+            Side-by-side comparison of key financial metrics
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6 overflow-x-auto">
+          <div className="grid gap-4 md:grid-cols-2">
+            <SpotlightCard className="p-4" spotlightColor="rgba(234, 179, 8, 0.1)">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Trophy className="size-4 text-warning" />
+                Best Overall Setup
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                {bestScore?.symbol ?? 'N/A'}
+              </p>
+              {bestScore && (
+                <p className="mt-1 text-xs text-muted-foreground tabular-nums">
+                  Score: <CountUp to={bestScore.score} duration={1.5} className="font-mono text-primary" />
+                </p>
+              )}
+              <p className="mt-1 text-sm text-muted-foreground">
+                Based on stronger ROE with lighter valuation and leverage.
+              </p>
+            </SpotlightCard>
 
-          <div className="rounded-xl border border-border/50 bg-muted/30 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Gauge className="size-4 text-primary" />
-              Strongest Momentum
-            </div>
-            <p className="mt-2 text-2xl font-semibold">
-              {stocks.find((stock) => stock.change === bestChange)?.symbol ?? 'N/A'}
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Highest current session move among selected stocks.
-            </p>
+            <SpotlightCard className="p-4" spotlightColor="rgba(52, 211, 153, 0.1)">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Gauge className="size-4 text-primary" />
+                Strongest Momentum
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                {stocks.find((stock) => stock.change === bestChange)?.symbol ?? 'N/A'}
+              </p>
+              {bestChange !== null && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Change:{' '}
+                  <CountUp
+                    to={bestChange}
+                    duration={1.2}
+                    className={cn(
+                      'font-mono font-semibold',
+                      bestChange >= 0 ? 'text-success' : 'text-destructive'
+                    )}
+                  />
+                  %
+                </p>
+              )}
+              <p className="mt-1 text-sm text-muted-foreground">
+                Highest current session move among selected stocks.
+              </p>
+            </SpotlightCard>
           </div>
-        </div>
 
         <Table>
           <TableHeader>
@@ -268,7 +290,8 @@ export function ComparisonTable({ symbols }: ComparisonTableProps) {
             ))}
           </TableBody>
         </Table>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </SpotlightCard>
   )
 }

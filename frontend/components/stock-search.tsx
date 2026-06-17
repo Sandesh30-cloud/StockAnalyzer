@@ -164,7 +164,7 @@ export function StockSearch({
           {results.map((stock) => (
             <Card
               key={stock.symbol}
-              className="py-4 rounded-xl border-border/50 hover:border-primary/30 hover:bg-muted/20 transition-all"
+              className="py-4 rounded-xl border-border/50 bg-card/50 backdrop-blur-sm hover:border-primary/40 hover:bg-card/80 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300"
             >
               <CardContent className="flex items-center justify-between gap-4">
                 {(() => {
