@@ -46,7 +46,7 @@ function MetricTile({
 }
 
 export function IpoAdvisor() {
-  const [companyName, setCompanyName] = useState('Indo-MIM')
+  const [companyName, setCompanyName] = useState('company name')
   const [result, setResult] = useState<IpoAdvisorResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
