@@ -119,7 +119,7 @@ export function NewsSentiment({ symbols }: NewsSentimentProps) {
 
         {data?.error && (
           <div className="rounded-xl border border-warning/30 bg-warning/10 p-4 text-sm text-warning-foreground">
-            {data.error}. News is now sourced from Yahoo Finance through the backend.
+            {data.error}.
           </div>
         )}
 
