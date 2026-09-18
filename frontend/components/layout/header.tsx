@@ -1,14 +1,15 @@
 'use client'
 
+import Link from 'next/link'
 import { TrendingUp } from 'lucide-react'
-import ShinyText from '@/components/ShinyText'
-import StarBorder from '@/components/StarBorder'
+import ShinyText from '@/components/animations/ShinyText'
+import StarBorder from '@/components/animations/StarBorder'
 
 export function Header() {
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/70 backdrop-blur-2xl supports-[backdrop-filter]:bg-background/50">
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 flex h-16 items-center justify-between">
-        <div className="flex items-center gap-3">
+        <Link href="/" className="flex items-center gap-3">
           <div className="relative flex items-center justify-center size-10 rounded-xl bg-gradient-to-br from-primary to-emerald-600 text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/20">
             <TrendingUp className="size-5" strokeWidth={2.5} />
             <div className="absolute inset-0 rounded-xl bg-primary/20 animate-pulse" />
@@ -27,7 +28,7 @@ export function Header() {
               Compare & Analyze
             </p>
           </div>
-        </div>
+        </Link>
         <StarBorder
           as="div"
           className="hidden sm:block"

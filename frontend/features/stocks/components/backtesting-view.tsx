@@ -8,57 +8,13 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { swrFetcher } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import type { BacktestResponse } from '@/types/backtest'
 
 interface BacktestingProps {
   symbols: string[]
 }
-
-interface BacktestTrade {
-  entryDate: string
-  entryPrice: number
-  entryRsi: number
-  entrySignal: string
-  exitDate: string
-  exitPrice: number
-  returnPercent: number
-  exitRsi: number
-  exitReason: string
-  holdingDays: number
-}
-
-interface BacktestResponse {
-  symbol: string
-  strategy: string
-  rules: string[]
-  periodStart: string
-  periodEnd: string
-  signals: {
-    currentSignal: 'Bullish' | 'Neutral' | 'Bearish'
-    buySignals: number
-    sellSignals: number
-  }
-  metrics: {
-    totalReturnPercent: number
-    buyHoldReturnPercent: number
-    maxDrawdownPercent: number
-    winRatePercent: number
-    tradeCount: number
-    exposurePercent: number
-    avgTradeReturnPercent: number
-    bestTradePercent: number
-    worstTradePercent: number
-  }
-  latest: {
-    close: number
-    sma20: number | null
-    sma50: number | null
-    rsi14: number | null
-  }
-  trades: BacktestTrade[]
-  error?: string
-}
-
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 function MetricPill({
   label,
@@ -87,8 +43,8 @@ export function BacktestingView({ symbols }: BacktestingProps) {
   }, [selectedSymbol, symbols])
 
   const { data, isLoading } = useSWR<BacktestResponse>(
-    selectedSymbol ? `/api/backtest/${selectedSymbol}` : null,
-    fetcher,
+    selectedSymbol ? endpoints.backtest(selectedSymbol) : null,
+    swrFetcher,
     { revalidateOnFocus: false },
   )
 

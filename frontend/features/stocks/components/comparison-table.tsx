@@ -7,46 +7,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import SpotlightCard from '@/components/SpotlightCard'
-import CountUp from '@/components/CountUp'
-
-interface ComparisonStock {
-  symbol: string
-  name: string
-  currency?: string
-  currencySymbol?: string
-  sector: string
-  price: number | null
-  change: number | null
-  marketCap: number | null
-  marketCapFormatted: string | null
-  revenue: number | null
-  revenueFormatted: string | null
-  netProfit: number | null
-  netProfitFormatted: string | null
-  roe: number | null
-  pe: number | null
-  forwardPE: number | null
-  debtToEquity: number | null
-  eps: number | null
-  dividendYield: number | null
-  beta: number | null
-  error?: string
-}
+import SpotlightCard from '@/components/animations/SpotlightCard'
+import CountUp from '@/components/animations/CountUp'
+import { swrFetcher } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import { formatCompactCurrency } from '@/lib/format/currency'
+import type { CompareResponse, ComparisonStock } from '@/types/stock'
 
 interface ComparisonTableProps {
   symbols: string[]
-}
-
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
-
-function formatCompactCurrency(value: number, currencySymbol = '$') {
-  const absValue = Math.abs(value)
-  if (absValue >= 1e12) return `${currencySymbol}${(value / 1e12).toFixed(2)}T`
-  if (absValue >= 1e9) return `${currencySymbol}${(value / 1e9).toFixed(2)}B`
-  if (absValue >= 1e6) return `${currencySymbol}${(value / 1e6).toFixed(2)}M`
-  if (absValue >= 1e3) return `${currencySymbol}${(value / 1e3).toFixed(2)}K`
-  return `${currencySymbol}${value.toFixed(2)}`
 }
 
 function getComparisonScore(stock: ComparisonStock): number | null {
@@ -58,9 +27,9 @@ function getComparisonScore(stock: ComparisonStock): number | null {
 }
 
 export function ComparisonTable({ symbols }: ComparisonTableProps) {
-  const { data, error, isLoading } = useSWR<{ comparison: ComparisonStock[] }>(
-    symbols.length >= 2 ? `/api/compare?symbols=${symbols.join(',')}` : null,
-    fetcher,
+  const { data, error, isLoading } = useSWR<CompareResponse>(
+    symbols.length >= 2 ? endpoints.compare(symbols) : null,
+    swrFetcher,
     { revalidateOnFocus: false, refreshInterval: 60000 }
   )
 
@@ -270,11 +239,9 @@ export function ComparisonTable({ symbols }: ComparisonTableProps) {
                           ),
                           isBest && "font-bold text-success"
                         )}>
-                          {metric.raw 
-                            ? (value || 'N/A')
-                            : typeof value === 'number' 
-                              ? metric.format!(value, stock)
-                              : 'N/A'
+                          {typeof value === 'number' 
+                            ? metric.format(value, stock)
+                            : 'N/A'
                           }
                         </span>
                         {isBest && (

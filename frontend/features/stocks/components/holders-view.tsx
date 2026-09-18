@@ -7,7 +7,10 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Skeleton } from '@/components/ui/skeleton'
+import { swrFetcher } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
 import { Badge } from '@/components/ui/badge'
+import { formatCompactCurrency } from '@/lib/format/currency'
 
 interface HoldersViewProps {
   symbols: string[]
@@ -25,7 +28,7 @@ interface HolderData {
     Value: number
   }> | null
   majorHolders: Array<{
-    value: string
+    value: number | string
     description: string
   }> | null
   mutualFundHolders: Array<{
@@ -39,20 +42,19 @@ interface HolderData {
   error?: string
 }
 
-// High-contrast colors for dark mode visibility
 const COLORS = [
   '#14b8a6', // Teal - Institutional
   '#f43f5e', // Rose - Insider
   '#f59e0b', // Amber - Retail & Other
 ]
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = swrFetcher
 
 export function HoldersView({ symbols }: HoldersViewProps) {
   const [selectedSymbol, setSelectedSymbol] = useState(symbols[0] || '')
 
   const { data, isLoading } = useSWR<HolderData>(
-    selectedSymbol ? `/api/holders/${selectedSymbol}` : null,
+    selectedSymbol ? endpoints.holders(selectedSymbol) : null,
     fetcher,
     { revalidateOnFocus: false }
   )
@@ -94,7 +96,7 @@ export function HoldersView({ symbols }: HoldersViewProps) {
     { name: 'Institutional', value: instPercent, color: COLORS[0] },
     { name: 'Insider', value: insiderPercent, color: COLORS[1] },
     { name: 'Retail & Other', value: retailPercent, color: COLORS[2] },
-  ].filter((d) => d.value > 0.1) // Hide near-zero segments for clarity
+  ].filter((d) => d.value > 0.1)
 
   const hasHoldingData = holdingData.length > 0
 
@@ -124,7 +126,6 @@ export function HoldersView({ symbols }: HoldersViewProps) {
       </CardHeader>
       <CardContent>
         <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          {/* Pie Chart */}
           <div>
             <h4 className="font-medium mb-4">Ownership Distribution</h4>
             {hasHoldingData ? (
@@ -186,7 +187,6 @@ export function HoldersView({ symbols }: HoldersViewProps) {
               </div>
             )}
 
-            {/* Summary breakdown */}
             {hasHoldingData && (
               <div className="mt-4 flex flex-wrap gap-4 text-sm">
                 {holdingData.map((d) => (
@@ -202,20 +202,22 @@ export function HoldersView({ symbols }: HoldersViewProps) {
               </div>
             )}
 
-            {/* Major Holders Summary */}
             {data?.majorHolders && data.majorHolders.length > 0 && (
               <div className="mt-4 space-y-2">
                 {data.majorHolders.map((holder, index) => (
                   <div key={index} className="flex justify-between items-center text-sm">
                     <span className="text-muted-foreground">{holder.description}</span>
-                    <Badge variant="secondary">{holder.value}</Badge>
+                    <Badge variant="secondary">
+                      {typeof holder.value === 'number' 
+                        ? formatCompactCurrency(holder.value) 
+                        : holder.value}
+                    </Badge>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Institutional Holders Table */}
           <div className="space-y-6">
             <h4 className="font-medium mb-4">Top Institutional Holders</h4>
             {data?.institutionalHolders && data.institutionalHolders.length > 0 ? (

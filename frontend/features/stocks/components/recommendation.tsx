@@ -18,71 +18,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import SpotlightCard from '@/components/SpotlightCard'
-import ShinyText from '@/components/ShinyText'
-import CountUp from '@/components/CountUp'
+import SpotlightCard from '@/components/animations/SpotlightCard'
+import ShinyText from '@/components/animations/ShinyText'
+import CountUp from '@/components/animations/CountUp'
+import { swrFetcher } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import type {
+  AIAnalysisData,
+  NewsAnalysisData,
+  RecommendationData,
+} from '@/types/recommendation'
 
 interface RecommendationProps {
   symbols: string[]
 }
 
-interface Signal {
-  type: 'positive' | 'negative' | 'neutral' | 'warning'
-  message: string
-}
-
-interface RecommendationData {
-  symbol: string
-  name: string
-  longTerm: {
-    recommendation: string
-    score: number
-    signals: Signal[]
-  }
-  shortTerm: {
-    recommendation: string
-    score: number
-    signals: Signal[]
-  }
-  metrics: {
-    pe: number | null
-    forwardPE: number | null
-    roe: number | null
-    debtToEquity: number | null
-    dividendYield: number | null
-    beta: number | null
-    priceChange1m: number | null
-    priceChange3m: number | null
-    volumeTrend: number | null
-    sma20: number | null
-    sma50: number | null
-    movingAverageSignal: 'Bullish' | 'Neutral' | 'Bearish'
-  }
-  error?: string
-}
-
-interface NewsAnalysisData {
-  overallSentiment: 'Positive' | 'Neutral' | 'Negative'
-  sentimentScore: number
-  articles: Array<{
-    title: string
-    url: string
-    sentiment: 'Positive' | 'Neutral' | 'Negative'
-  }>
-  error?: string
-}
-
-interface AIAnalysisData {
-  score: number | null
-  confidence: number | null
-  view: 'BUY' | 'HOLD' | 'SELL' | null
-  summary: string
-  bullishFactors: string[]
-  bearishFactors: string[]
-  error?: string
-}
-
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = swrFetcher
 
 const getRecommendationColor = (recommendation: string) => {
   switch (recommendation) {
@@ -208,17 +159,17 @@ export function Recommendation({ symbols }: RecommendationProps) {
   }, [selectedSymbol, symbols])
 
   const { data, isLoading } = useSWR<RecommendationData>(
-    selectedSymbol ? `/api/recommendation/${selectedSymbol}` : null,
+    selectedSymbol ? endpoints.recommendation(selectedSymbol) : null,
     fetcher,
     { revalidateOnFocus: false, refreshInterval: 60000 }
   )
   const { data: newsData } = useSWR<NewsAnalysisData>(
-    selectedSymbol ? `/api/news-analysis/${selectedSymbol}` : null,
+    selectedSymbol ? endpoints.newsAnalysis(selectedSymbol) : null,
     fetcher,
     { revalidateOnFocus: false, refreshInterval: 60000 }
   )
   const { data: aiData, isLoading: isAiLoading } = useSWR<AIAnalysisData>(
-    selectedSymbol ? `/api/ai-analysis/${selectedSymbol}` : null,
+    selectedSymbol ? endpoints.aiAnalysis(selectedSymbol) : null,
     fetcher,
     { revalidateOnFocus: false, refreshInterval: 60000 }
   )

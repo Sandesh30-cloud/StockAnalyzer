@@ -1,5 +1,4 @@
 import * as React from 'react'
-
 import { cn } from '@/lib/utils'
 
 function Card({ className, ...props }: React.ComponentProps<'div'>) {
@@ -7,7 +6,7 @@ function Card({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot="card"
       className={cn(
-        'bg-card text-card-foreground flex flex-col gap-6 rounded-2xl border border-border/50 py-6 shadow-lg shadow-black/5 dark:shadow-black/20',
+        'bg-white/5 text-card-foreground flex flex-col gap-6 rounded-xl border border-white/10 transition-colors hover:border-emerald-500/40 py-6 shadow-lg shadow-black/5 dark:shadow-black/20',
         className,
       )}
       {...props}
@@ -32,7 +31,7 @@ function CardTitle({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       data-slot="card-title"
-      className={cn('leading-none font-semibold', className)}
+      className={cn('leading-none font-semibold text-white', className)}
       {...props}
     />
   )

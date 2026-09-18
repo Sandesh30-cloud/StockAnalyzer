@@ -7,6 +7,12 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import json
+from pydantic import BaseModel
+import re
+from html import unescape
+from io import StringIO
+from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
 
 app = fastapi.FastAPI(title="Stock Analysis API")
 
@@ -237,6 +243,28 @@ def classify_sentiment_score(score: int) -> str:
     if score < -1:
         return "Negative"
     return "Neutral"
+
+
+class IpoAdvisorRequest(BaseModel):
+    companyName: str = "IPO Candidate"
+    issuePrice: Optional[float] = None
+    expectedListingPrice: Optional[float] = None
+    gmp: Optional[float] = None
+    eps: Optional[float] = None
+    peerPe: Optional[float] = None
+    industryPe: Optional[float] = None
+    roe: Optional[float] = None
+    roce: Optional[float] = None
+    revenueGrowth: Optional[float] = None
+    profitGrowth: Optional[float] = None
+    debtToEquity: Optional[float] = None
+    issueSizeCr: Optional[float] = None
+    postIssueMarketCapCr: Optional[float] = None
+    freshIssuePct: Optional[float] = None
+    ofsPct: Optional[float] = None
+    qibSubscription: Optional[float] = None
+    hniSubscription: Optional[float] = None
+    retailSubscription: Optional[float] = None
 
 
 def analyze_news_articles(articles: list[dict]) -> list[dict]:
@@ -609,6 +637,501 @@ def build_ai_analysis(payload: dict, news_analysis: dict, stock_info: dict) -> d
             "articleCount": len(news_analysis.get("articles", [])),
             "trend": get_trend_label(metrics),
         },
+    }
+
+
+def build_ipo_advisor_payload(request: IpoAdvisorRequest) -> dict:
+    if request.issuePrice is None or request.issuePrice <= 0:
+        raise ValueError("Issue price is required for IPO analysis")
+
+    issue_price = request.issuePrice
+    ipo_pe = None
+    if request.eps is not None and request.eps > 0:
+        ipo_pe = round(issue_price / request.eps, 2)
+
+    benchmark_pe = request.peerPe if request.peerPe is not None else request.industryPe
+    valuation_gap_pct = None
+    if ipo_pe is not None and benchmark_pe not in (None, 0):
+        valuation_gap_pct = round(((ipo_pe - benchmark_pe) / benchmark_pe) * 100, 2)
+
+    implied_listing_price = None
+    if request.expectedListingPrice is not None and request.expectedListingPrice > 0:
+        implied_listing_price = request.expectedListingPrice
+    elif request.gmp is not None:
+        implied_listing_price = issue_price + request.gmp
+
+    expected_listing_gain_pct = None
+    if implied_listing_price is not None and issue_price > 0:
+        expected_listing_gain_pct = round(((implied_listing_price - issue_price) / issue_price) * 100, 2)
+
+    issue_size_to_market_cap_pct = None
+    if (
+        request.issueSizeCr is not None
+        and request.postIssueMarketCapCr is not None
+        and request.postIssueMarketCapCr > 0
+    ):
+        issue_size_to_market_cap_pct = round(
+            (request.issueSizeCr / request.postIssueMarketCapCr) * 100,
+            2,
+        )
+
+    weighted_subscription = None
+    subscription_inputs = [
+        request.qibSubscription,
+        request.hniSubscription,
+        request.retailSubscription,
+    ]
+    if any(value is not None for value in subscription_inputs):
+        weighted_subscription = round(
+            (request.qibSubscription or 0) * 0.5
+            + (request.hniSubscription or 0) * 0.3
+            + (request.retailSubscription or 0) * 0.2,
+            2,
+        )
+
+    score = 50
+    signals = []
+
+    def add_signal(signal_type: str, impact: int, message: str):
+        nonlocal score
+        signals.append({"type": signal_type, "impact": impact, "message": message})
+        score += impact
+
+    if expected_listing_gain_pct is not None:
+        if expected_listing_gain_pct >= 20:
+            add_signal("positive", 18, f"Implied listing gain of {expected_listing_gain_pct:.1f}% is strong for a listing-gain strategy")
+        elif expected_listing_gain_pct >= 10:
+            add_signal("positive", 10, f"Implied listing gain of {expected_listing_gain_pct:.1f}% is healthy")
+        elif expected_listing_gain_pct > 0:
+            add_signal("neutral", 4, f"Implied listing gain of {expected_listing_gain_pct:.1f}% is positive but not exceptional")
+        else:
+            add_signal("negative", -18, f"Implied listing gain of {expected_listing_gain_pct:.1f}% is weak or negative")
+    else:
+        add_signal("warning", 0, "No GMP or expected listing price provided, so listing-gain visibility is limited")
+
+    if valuation_gap_pct is not None:
+        if valuation_gap_pct <= -10:
+            add_signal("positive", 12, f"IPO valuation is at a {abs(valuation_gap_pct):.1f}% discount to the peer benchmark P/E")
+        elif valuation_gap_pct <= 10:
+            add_signal("positive", 6, f"IPO valuation is broadly in line with peers at {valuation_gap_pct:.1f}% versus benchmark P/E")
+        elif valuation_gap_pct <= 25:
+            add_signal("warning", -4, f"IPO comes at a {valuation_gap_pct:.1f}% premium to peer benchmark P/E")
+        else:
+            add_signal("negative", -12, f"IPO valuation is stretched at a {valuation_gap_pct:.1f}% premium to peer benchmark P/E")
+    elif ipo_pe is not None:
+        add_signal("warning", 0, "IPO P/E is available, but peer or industry P/E benchmark is missing")
+    else:
+        add_signal("warning", 0, "EPS is missing, so P/E-based valuation analysis is unavailable")
+
+    if request.roe is not None:
+        if request.roe >= 18:
+            add_signal("positive", 8, f"ROE of {request.roe:.1f}% supports strong capital efficiency")
+        elif request.roe >= 12:
+            add_signal("positive", 4, f"ROE of {request.roe:.1f}% is respectable")
+        elif request.roe < 8:
+            add_signal("negative", -7, f"ROE of {request.roe:.1f}% is weak for an IPO asking public capital")
+        else:
+            add_signal("neutral", 0, f"ROE of {request.roe:.1f}% is average")
+
+    if request.roce is not None:
+        if request.roce >= 18:
+            add_signal("positive", 8, f"ROCE of {request.roce:.1f}% indicates efficient use of total capital")
+        elif request.roce >= 12:
+            add_signal("positive", 4, f"ROCE of {request.roce:.1f}% is satisfactory")
+        elif request.roce < 10:
+            add_signal("negative", -6, f"ROCE of {request.roce:.1f}% is below comfort for quick listing-gain conviction")
+        else:
+            add_signal("neutral", 0, f"ROCE of {request.roce:.1f}% is moderate")
+
+    if weighted_subscription is not None:
+        if weighted_subscription >= 25:
+            add_signal("positive", 16, f"Weighted subscription of {weighted_subscription:.1f}x suggests very strong listing demand")
+        elif weighted_subscription >= 10:
+            add_signal("positive", 10, f"Weighted subscription of {weighted_subscription:.1f}x suggests healthy demand")
+        elif weighted_subscription >= 3:
+            add_signal("neutral", 2, f"Weighted subscription of {weighted_subscription:.1f}x is decent but not euphoric")
+        else:
+            add_signal("negative", -10, f"Weighted subscription of only {weighted_subscription:.1f}x suggests weak demand support")
+
+    if request.qibSubscription is not None:
+        if request.qibSubscription >= 15:
+            add_signal("positive", 8, f"QIB demand at {request.qibSubscription:.1f}x adds institutional support")
+        elif request.qibSubscription < 3:
+            add_signal("negative", -8, f"QIB demand at {request.qibSubscription:.1f}x is too soft for a high-conviction listing trade")
+
+    if request.hniSubscription is not None:
+        if request.hniSubscription >= 10:
+            add_signal("positive", 5, f"HNI demand at {request.hniSubscription:.1f}x supports listing momentum")
+        elif request.hniSubscription < 2:
+            add_signal("negative", -4, f"HNI demand at {request.hniSubscription:.1f}x is subdued")
+
+    if request.retailSubscription is not None:
+        if request.retailSubscription >= 5:
+            add_signal("positive", 4, f"Retail demand at {request.retailSubscription:.1f}x shows broad participation")
+        elif request.retailSubscription < 1.5:
+            add_signal("negative", -3, f"Retail demand at {request.retailSubscription:.1f}x is underwhelming")
+
+    if issue_size_to_market_cap_pct is not None:
+        if issue_size_to_market_cap_pct <= 15:
+            add_signal("positive", 4, f"Issue size is contained at {issue_size_to_market_cap_pct:.1f}% of post-issue market cap")
+        elif issue_size_to_market_cap_pct <= 30:
+            add_signal("warning", -3, f"Issue size is meaningful at {issue_size_to_market_cap_pct:.1f}% of post-issue market cap")
+        else:
+            add_signal("negative", -8, f"Issue size is heavy at {issue_size_to_market_cap_pct:.1f}% of post-issue market cap")
+
+    if request.issueSizeCr is not None:
+        if request.issueSizeCr >= 5000:
+            add_signal("warning", -4, f"Large issue size of Rs {request.issueSizeCr:.0f} Cr may increase supply pressure on listing")
+        elif request.issueSizeCr <= 1000:
+            add_signal("positive", 2, f"Compact issue size of Rs {request.issueSizeCr:.0f} Cr can support scarcity value on debut")
+
+    if request.freshIssuePct is not None:
+        if request.freshIssuePct >= 70:
+            add_signal("positive", 5, f"Fresh issue portion of {request.freshIssuePct:.1f}% suggests more capital is going into the business")
+        elif request.freshIssuePct < 40:
+            add_signal("warning", -2, f"Fresh issue portion of only {request.freshIssuePct:.1f}% limits balance-sheet improvement")
+
+    if request.ofsPct is not None:
+        if request.ofsPct >= 60:
+            add_signal("warning", -5, f"OFS portion of {request.ofsPct:.1f}% indicates strong promoter/shareholder exit component")
+        elif request.ofsPct <= 20:
+            add_signal("positive", 2, f"Low OFS portion of {request.ofsPct:.1f}% reduces perceived exit overhang")
+
+    if request.profitGrowth is not None:
+        if request.profitGrowth >= 20:
+            add_signal("positive", 6, f"Profit growth of {request.profitGrowth:.1f}% strengthens listing narrative")
+        elif request.profitGrowth < 0:
+            add_signal("negative", -8, f"Negative profit growth of {request.profitGrowth:.1f}% hurts near-term enthusiasm")
+
+    if request.revenueGrowth is not None:
+        if request.revenueGrowth >= 15:
+            add_signal("positive", 4, f"Revenue growth of {request.revenueGrowth:.1f}% supports growth appetite")
+        elif request.revenueGrowth < 5:
+            add_signal("warning", -3, f"Revenue growth of {request.revenueGrowth:.1f}% is too modest for an aggressive IPO valuation")
+
+    if request.debtToEquity is not None:
+        if request.debtToEquity <= 0.5:
+            add_signal("positive", 5, f"Debt-to-equity of {request.debtToEquity:.2f} is comfortable")
+        elif request.debtToEquity >= 1.2:
+            add_signal("negative", -7, f"Debt-to-equity of {request.debtToEquity:.2f} is elevated")
+
+    score = max(0, min(100, score))
+    confidence = max(50, min(94, 50 + len([s for s in signals if s["impact"] != 0]) * 3))
+
+    if score >= 80:
+        verdict = "Apply Aggressively"
+    elif score >= 65:
+        verdict = "Apply for Listing Gain"
+    elif score >= 50:
+        verdict = "Apply Selectively"
+    else:
+        verdict = "Avoid for Listing Gain"
+
+    positives = [signal["message"] for signal in signals if signal["impact"] > 0][:4]
+    risks = [signal["message"] for signal in signals if signal["impact"] < 0][:4]
+    watchouts = [signal["message"] for signal in signals if signal["impact"] == 0][:3]
+
+    summary = (
+        f"{request.companyName} scores {score}/100 for a listing-gain-only IPO approach. "
+        f"The model view is {verdict}. "
+        f"{'Expected listing gain is estimated at ' + str(expected_listing_gain_pct) + '%. ' if expected_listing_gain_pct is not None else ''}"
+        f"{'Valuation is ' + ('rich' if valuation_gap_pct is not None and valuation_gap_pct > 10 else 'reasonable') + ' against peers. ' if valuation_gap_pct is not None else ''}"
+        "This framework is intentionally optimized for listing performance, not long-term compounding."
+    )
+
+    return {
+        "companyName": request.companyName,
+        "strategy": "Listing gain only",
+        "verdict": verdict,
+        "score": score,
+        "confidence": confidence,
+        "summary": summary,
+        "signals": signals,
+        "positives": positives,
+        "risks": risks,
+        "watchouts": watchouts,
+        "metrics": {
+            "issuePrice": issue_price,
+            "expectedListingPrice": round(implied_listing_price, 2) if implied_listing_price is not None else None,
+            "gmp": request.gmp,
+            "expectedListingGainPct": expected_listing_gain_pct,
+            "eps": request.eps,
+            "ipoPe": ipo_pe,
+            "peerPe": request.peerPe,
+            "industryPe": request.industryPe,
+            "valuationGapPct": valuation_gap_pct,
+            "roe": request.roe,
+            "roce": request.roce,
+            "revenueGrowth": request.revenueGrowth,
+            "profitGrowth": request.profitGrowth,
+            "debtToEquity": request.debtToEquity,
+            "issueSizeCr": request.issueSizeCr,
+            "postIssueMarketCapCr": request.postIssueMarketCapCr,
+            "issueSizeToMarketCapPct": issue_size_to_market_cap_pct,
+            "freshIssuePct": request.freshIssuePct,
+            "ofsPct": request.ofsPct,
+            "qibSubscription": request.qibSubscription,
+            "hniSubscription": request.hniSubscription,
+            "retailSubscription": request.retailSubscription,
+            "weightedSubscription": weighted_subscription,
+        },
+    }
+
+
+def fetch_text_url(url: str) -> str:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36"
+            )
+        },
+    )
+    with urlopen(request, timeout=15) as response:
+        return response.read().decode("utf-8", errors="ignore")
+
+
+def strip_html(html: str) -> str:
+    cleaned = re.sub(r"(?is)<(script|style).*?>.*?</\\1>", " ", html)
+    cleaned = re.sub(r"(?i)<br\\s*/?>", "\n", cleaned)
+    cleaned = re.sub(r"(?i)</(p|div|section|article|tr|li|h1|h2|h3|h4|td|th)>", "\n", cleaned)
+    cleaned = re.sub(r"(?s)<[^>]+>", " ", cleaned)
+    cleaned = unescape(cleaned)
+    cleaned = cleaned.replace("\xa0", " ")
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n\s+", "\n", cleaned)
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned)
+    return cleaned
+
+
+def slugify_company_name(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    normalized = re.sub(r"-{2,}", "-", normalized)
+    return normalized
+
+
+def extract_first_number(value: str) -> Optional[float]:
+    match = re.search(r"-?\d[\d,]*(?:\.\d+)?", value or "")
+    if not match:
+        return None
+    return float(match.group(0).replace(",", ""))
+
+
+def extract_last_number(value: str) -> Optional[float]:
+    matches = re.findall(r"-?\d[\d,]*(?:\.\d+)?", value or "")
+    if not matches:
+        return None
+    return float(matches[-1].replace(",", ""))
+
+
+def extract_percent(value: str) -> Optional[float]:
+    match = re.search(r"(-?\d[\d,]*(?:\.\d+)?)\s*%", value or "")
+    if not match:
+        return None
+    return float(match.group(1).replace(",", ""))
+
+
+def find_value_after_label(text: str, label: str) -> Optional[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if line.lower() == label.lower():
+            for candidate in lines[index + 1:index + 4]:
+                if candidate and candidate.lower() != label.lower():
+                    return candidate
+    pattern = rf"{re.escape(label)}\s*([^\n]+)"
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def find_subscription_value(text: str, labels: list[str]) -> Optional[float]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in lines:
+        lower_line = line.lower()
+        if any(label.lower() in lower_line for label in labels):
+            if "subscription" in lower_line or "rii" in lower_line or "nii" in lower_line or "qib" in lower_line:
+                value = extract_first_number(line)
+                if value is not None:
+                    return value
+    return None
+
+
+def find_gmp_value(text: str) -> Optional[float]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        if line.lower() == "gmp":
+            for candidate in lines[index + 1:index + 3]:
+                value = extract_first_number(candidate)
+                if value is not None:
+                    return value
+    premium_match = re.search(r"premium of ₹\s*([\d,]+(?:\.\d+)?)", text, re.IGNORECASE)
+    if premium_match:
+        return float(premium_match.group(1).replace(",", ""))
+    return None
+
+
+def parse_financial_table(html: str) -> dict[str, Optional[float]]:
+    try:
+        tables = pd.read_html(StringIO(html))
+    except ValueError:
+        return {
+            "revenueGrowth": None,
+            "profitGrowth": None,
+        }
+
+    for table in tables:
+        columns = [str(column).strip() for column in table.columns]
+        lowered = [column.lower() for column in columns]
+        if "revenue" in lowered and "pat" in lowered:
+            revenue_col = columns[lowered.index("revenue")]
+            pat_col = columns[lowered.index("pat")]
+            working = table.copy()
+            working[revenue_col] = pd.to_numeric(
+                working[revenue_col].astype(str).str.replace(",", "", regex=False),
+                errors="coerce",
+            )
+            working[pat_col] = pd.to_numeric(
+                working[pat_col].astype(str).str.replace(",", "", regex=False),
+                errors="coerce",
+            )
+            working = working.dropna(subset=[revenue_col, pat_col])
+            if len(working) >= 2:
+                first = working.iloc[0]
+                last = working.iloc[-1]
+                revenue_growth = None
+                profit_growth = None
+                if first[revenue_col] and first[revenue_col] > 0:
+                    revenue_growth = round(((last[revenue_col] - first[revenue_col]) / first[revenue_col]) * 100, 2)
+                if first[pat_col] and first[pat_col] > 0:
+                    profit_growth = round(((last[pat_col] - first[pat_col]) / first[pat_col]) * 100, 2)
+                return {
+                    "revenueGrowth": revenue_growth,
+                    "profitGrowth": profit_growth,
+                }
+    return {
+        "revenueGrowth": None,
+        "profitGrowth": None,
+    }
+
+
+def parse_peer_pe(html: str) -> Optional[float]:
+    try:
+        tables = pd.read_html(StringIO(html))
+    except ValueError:
+        return None
+
+    for table in tables:
+        columns = [str(column).strip().lower() for column in table.columns]
+        if "p/e" in columns and "company" in columns:
+            pe_col = table.columns[columns.index("p/e")]
+            company_col = table.columns[columns.index("company")]
+            peer_values = []
+            for _, row in table.iterrows():
+                company_name = str(row[company_col]).strip().lower()
+                if "ipo" in company_name or company_name == "" or company_name == "nan":
+                    continue
+                pe_value = extract_first_number(str(row[pe_col]))
+                if pe_value is not None:
+                    peer_values.append(pe_value)
+            if peer_values:
+                return round(float(np.median(peer_values)), 2)
+    return None
+
+
+def locate_ipostation_url(company_name: str) -> str:
+    current_year = datetime.now().year
+    slug = slugify_company_name(company_name)
+    candidates = [
+        f"https://ipostation.in/ipo/{slug}-ipo-{current_year}",
+        f"https://ipostation.in/ipo/{slug}-ipo-{current_year - 1}",
+        f"https://ipostation.in/ipo/{slug}-ipo-{current_year + 1}",
+    ]
+
+    for url in candidates:
+        try:
+            html = fetch_text_url(url)
+        except Exception:
+            continue
+        if "Page not found" not in html and "<title>" in html:
+            return url
+
+    query = quote_plus(f'site:ipostation.in/ipo "{company_name}" IPO')
+    search_html = fetch_text_url(f"https://html.duckduckgo.com/html/?q={query}")
+    matches = re.findall(r'href="(https://ipostation\.in/ipo/[^"]+)"', search_html)
+    if matches:
+        return matches[0]
+
+    raise ValueError(f"Could not find a matching IPO page online for {company_name}")
+
+
+def fetch_ipo_data_by_company_name(company_name: str) -> dict:
+    source_url = locate_ipostation_url(company_name)
+    html = fetch_text_url(source_url)
+    text = strip_html(html)
+
+    price_band_text = find_value_after_label(text, "Price Band")
+    issue_size_text = find_value_after_label(text, "Issue Size")
+    fresh_issue_text = find_value_after_label(text, "Fresh Issue")
+    ofs_text = find_value_after_label(text, "OFS")
+    post_issue_market_cap_text = find_value_after_label(text, "Market Cap")
+    roe_text = find_value_after_label(text, "RoE")
+    roce_text = find_value_after_label(text, "RoCE")
+    debt_equity_text = find_value_after_label(text, "Debt / Equity")
+    eps_post_text = find_value_after_label(text, "EPS (post-issue)")
+    eps_pre_text = find_value_after_label(text, "EPS (pre-issue)")
+
+    issue_price = extract_last_number(price_band_text or "")
+    fresh_issue = extract_first_number(fresh_issue_text or "")
+    ofs = extract_first_number(ofs_text or "")
+    issue_size = extract_first_number(issue_size_text or "")
+    post_issue_market_cap = extract_first_number(post_issue_market_cap_text or "")
+    roe = extract_percent(roe_text or "") or extract_first_number(roe_text or "")
+    roce = extract_percent(roce_text or "") or extract_first_number(roce_text or "")
+    debt_to_equity = extract_first_number(debt_equity_text or "")
+    eps = extract_first_number(eps_post_text or "") or extract_first_number(eps_pre_text or "")
+    qib = find_subscription_value(text, ["qib"])
+    hni = find_subscription_value(text, ["nii", "hni", "snii", "bnii"])
+    retail = find_subscription_value(text, ["retail", "rii"])
+    gmp = find_gmp_value(text)
+    revenue_profit_growth = parse_financial_table(html)
+    peer_pe = parse_peer_pe(html)
+
+    fresh_issue_pct = None
+    ofs_pct = None
+    total_issue_components = None
+    if fresh_issue is not None and ofs is not None:
+        total_issue_components = fresh_issue + ofs
+        if total_issue_components > 0:
+            fresh_issue_pct = round((fresh_issue / total_issue_components) * 100, 2)
+            ofs_pct = round((ofs / total_issue_components) * 100, 2)
+
+    if issue_price is None:
+        raise ValueError(f"Could not extract issue price from {source_url}")
+
+    return {
+        "companyName": company_name,
+        "issuePrice": issue_price,
+        "gmp": gmp,
+        "eps": eps,
+        "peerPe": peer_pe,
+        "industryPe": None,
+        "roe": roe,
+        "roce": roce,
+        "revenueGrowth": revenue_profit_growth["revenueGrowth"],
+        "profitGrowth": revenue_profit_growth["profitGrowth"],
+        "debtToEquity": debt_to_equity,
+        "issueSizeCr": issue_size,
+        "postIssueMarketCapCr": post_issue_market_cap,
+        "freshIssuePct": fresh_issue_pct,
+        "ofsPct": ofs_pct,
+        "qibSubscription": qib,
+        "hniSubscription": hni,
+        "retailSubscription": retail,
+        "sourceUrl": source_url,
+        "sourceDomain": "ipostation.in",
+        "fetchedAt": datetime.now().isoformat(),
     }
 
 
@@ -1191,6 +1714,30 @@ async def get_recommendation(symbol: str):
         balance_sheet = ticker.balance_sheet
         hist = get_one_year_history(ticker)
         return build_recommendation_payload(symbol, info, balance_sheet, hist)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/ipo-advisor")
+async def ipo_advisor(request: IpoAdvisorRequest):
+    """Score an IPO specifically for listing-gain participation."""
+    try:
+        resolved_request = request
+        source_meta = None
+
+        if resolved_request.issuePrice is None:
+            ipo_data = fetch_ipo_data_by_company_name(request.companyName)
+            resolved_request = IpoAdvisorRequest(**ipo_data)
+            source_meta = {
+                "url": ipo_data.get("sourceUrl"),
+                "domain": ipo_data.get("sourceDomain"),
+                "fetchedAt": ipo_data.get("fetchedAt"),
+            }
+
+        payload = build_ipo_advisor_payload(resolved_request)
+        if source_meta:
+            payload["source"] = source_meta
+        return payload
     except Exception as e:
         return {"error": str(e)}
 

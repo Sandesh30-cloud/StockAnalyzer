@@ -8,6 +8,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { swrFetcher } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import { formatCompactCurrency } from '@/lib/format/currency'
 
 interface FinancialsViewProps {
   symbols: string[]
@@ -28,17 +31,16 @@ interface FinancialData {
   error?: string
 }
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
+const fetcher = swrFetcher
 
 const formatNumber = (
   value: number | string | null,
-  scaleLabel = '',
+  currencySymbol = '$',
 ): string => {
   if (value === null || value === undefined) return '-'
   if (typeof value === 'string') return value
 
-  const suffix = scaleLabel || ''
-  return `${value.toFixed(2)}${suffix}`
+  return formatCompactCurrency(value, currencySymbol)
 }
 
 function FinancialTable({ data }: { data: FinancialData }) {
@@ -67,11 +69,6 @@ function FinancialTable({ data }: { data: FinancialData }) {
             Currency: {data.currency}
           </span>
         )}
-        {data.scaleLabel && (
-          <span className="rounded-md border border-border/50 bg-muted/40 px-2 py-1">
-            Scale: {data.scaleLabel}
-          </span>
-        )}
       </div>
       <Table>
         <TableHeader>
@@ -94,7 +91,7 @@ function FinancialTable({ data }: { data: FinancialData }) {
                 <TableCell key={period} className="text-right font-mono">
                   {formatNumber(
                     (row[`${period}Formatted`] as number | null) ?? null,
-                    data.scaleLabel ?? '',
+                    data.currencySymbol || '$',
                   )}
                 </TableCell>
               ))}
@@ -112,7 +109,7 @@ export function FinancialsView({ symbols }: FinancialsViewProps) {
 
   const { data, isLoading } = useSWR<FinancialData>(
     selectedSymbol 
-      ? `/api/financials/${selectedSymbol}?statement=${statementType}`
+      ? endpoints.financials(selectedSymbol, statementType)
       : null,
     fetcher,
     { revalidateOnFocus: false }

@@ -8,34 +8,13 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-
-interface NewsArticle {
-  title: string
-  description: string
-  url: string
-  publishedAt: string
-  sentiment: 'Positive' | 'Neutral' | 'Negative'
-  sentimentScore: number
-}
-
-interface NewsAnalysisResponse {
-  stock: string
-  overallSentiment: 'Positive' | 'Neutral' | 'Negative'
-  sentimentScore: number
-  counts: {
-    positive: number
-    neutral: number
-    negative: number
-  }
-  articles: NewsArticle[]
-  error?: string
-}
+import { swrFetcher } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import type { NewsAnalysisResponse } from '@/types/news'
 
 interface NewsSentimentProps {
   symbols: string[]
 }
-
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 const dateFormatter = new Intl.DateTimeFormat('en-US', {
   month: 'short',
@@ -45,9 +24,9 @@ const dateFormatter = new Intl.DateTimeFormat('en-US', {
 })
 
 function getSentimentVariant(sentiment: 'Positive' | 'Neutral' | 'Negative') {
-  if (sentiment === 'Positive') return 'success'
-  if (sentiment === 'Negative') return 'destructive'
-  return 'warning'
+  if (sentiment === 'Positive') return 'success' as const
+  if (sentiment === 'Negative') return 'destructive' as const
+  return 'warning' as const
 }
 
 export function NewsSentiment({ symbols }: NewsSentimentProps) {
@@ -60,15 +39,15 @@ export function NewsSentiment({ symbols }: NewsSentimentProps) {
   }, [selectedSymbol, symbols])
 
   const { data, isLoading } = useSWR<NewsAnalysisResponse>(
-    selectedSymbol ? `/api/news-analysis/${selectedSymbol}` : null,
-    fetcher,
+    selectedSymbol ? endpoints.newsAnalysis(selectedSymbol) : null,
+    swrFetcher,
     { revalidateOnFocus: false, refreshInterval: 60000 },
   )
 
   const articles = data?.articles ?? []
   const summaryBadges = useMemo(
     () => [
-      { label: 'Overall', value: data?.overallSentiment ?? 'Neutral', variant: getSentimentVariant(data?.overallSentiment ?? 'Neutral') },
+      { label: 'Overall', value: data?.overallSentiment ?? 'Neutral', variant: getSentimentVariant(data?.overallSentiment as 'Positive' | 'Neutral' | 'Negative' ?? 'Neutral') },
       { label: 'Positive', value: String(data?.counts?.positive ?? 0), variant: 'success' as const },
       { label: 'Neutral', value: String(data?.counts?.neutral ?? 0), variant: 'warning' as const },
       { label: 'Negative', value: String(data?.counts?.negative ?? 0), variant: 'destructive' as const },
@@ -156,9 +135,9 @@ export function NewsSentiment({ symbols }: NewsSentimentProps) {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={getSentimentVariant(article.sentiment)}>{article.sentiment}</Badge>
+                    <Badge variant={getSentimentVariant(article.sentiment as 'Positive' | 'Neutral' | 'Negative')}>{article.sentiment}</Badge>
                     <span className="text-xs text-muted-foreground">
-                      {dateFormatter.format(new Date(article.publishedAt))}
+                      {article.publishedAt ? dateFormatter.format(new Date(article.publishedAt)) : 'Unknown date'}
                     </span>
                   </div>
                   <h4 className="font-medium leading-snug">{article.title}</h4>

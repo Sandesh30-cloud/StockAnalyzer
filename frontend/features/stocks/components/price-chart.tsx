@@ -7,6 +7,8 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/com
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { swrFetcher } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
 
 interface PriceChartProps {
   symbols: string[]
@@ -21,7 +23,6 @@ const PERIODS = [
   { label: '5Y', value: '5y' },
 ]
 
-// High-contrast colors for dark mode visibility
 const COLORS = [
   '#14b8a6', // Teal
   '#f43f5e', // Rose
@@ -30,18 +31,16 @@ const COLORS = [
   '#8b5cf6', // Purple
 ]
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json())
 
 export function PriceChart({ symbols }: PriceChartProps) {
   const [period, setPeriod] = useState('1y')
 
-  // Fetch data for all symbols
   const { data: priceData, isLoading } = useSWR(
     symbols.length > 0 
-      ? symbols.map(s => `/api/price-history/${s}?period=${period}`)
+      ? symbols.map((symbol) => endpoints.priceHistory(symbol, period))
       : null,
-    async (urls) => {
-      const results = await Promise.all(urls.map((url: string) => fetcher(url)))
+    async (urls: string[]) => {
+      const results = await Promise.all(urls.map((url) => swrFetcher(url)))
       return results
     },
     { revalidateOnFocus: false, refreshInterval: 60000 }
@@ -73,13 +72,12 @@ export function PriceChart({ symbols }: PriceChartProps) {
     )
   }
 
-  // Merge data from all symbols
   const mergedData: Record<string, Record<string, number | string>> = {}
   
-  priceData?.forEach((stockData: { symbol: string; data: Array<{ date: string; close: number }> }, index: number) => {
+  priceData?.forEach((stockData: any, index: number) => {
     if (stockData?.data) {
       const symbol = symbols[index]
-      stockData.data.forEach((point: { date: string; close: number }) => {
+      stockData.data.forEach((point: any) => {
         if (!mergedData[point.date]) {
           mergedData[point.date] = { date: point.date }
         }
@@ -92,11 +90,10 @@ export function PriceChart({ symbols }: PriceChartProps) {
     new Date(a.date as string).getTime() - new Date(b.date as string).getTime()
   )
 
-  // Normalize data to percentage change for comparison
-  const normalizedData = chartData.map((point, index) => {
+  const normalizedData = chartData.map((point) => {
     const normalized: Record<string, number | string> = { date: point.date }
     symbols.forEach((symbol) => {
-      if (chartData[0][symbol] && point[symbol]) {
+      if (chartData[0] && chartData[0][symbol] && point[symbol]) {
         const firstValue = chartData[0][symbol] as number
         const currentValue = point[symbol] as number
         normalized[symbol] = ((currentValue - firstValue) / firstValue) * 100

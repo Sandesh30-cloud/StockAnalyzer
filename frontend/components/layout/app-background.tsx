@@ -1,6 +1,6 @@
 'use client'
 
-import Aurora from '@/components/Aurora'
+import Aurora from '@/components/animations/Aurora'
 
 export function AppBackground() {
   return (

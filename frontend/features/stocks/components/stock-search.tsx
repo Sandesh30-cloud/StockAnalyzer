@@ -7,18 +7,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-
-interface StockResult {
-  symbol: string
-  name: string
-  sector: string
-  industry: string
-  marketCap: number | null
-  price: number | null
-  change: number | null
-  currency?: string
-  currencySymbol?: string
-}
+import { apiFetch } from '@/lib/api/client'
+import { endpoints } from '@/lib/api/endpoints'
+import { formatMarketCap } from '@/lib/format/currency'
+import type { SearchStockResponse, StockResult } from '@/types/stock'
 
 interface StockSearchProps {
   selectedStocks: string[]
@@ -48,34 +40,23 @@ export function StockSearch({
     setError(null)
 
     try {
-      const response = await fetch(`/api/search-stock?query=${encodeURIComponent(searchQuery)}`)
-      let data: { error?: string; results?: StockResult[] }
-      try {
-        data = await response.json()
-      } catch {
-        if (!response.ok) {
-          setError('Backend unavailable. Run: cd backend && python3 -m uvicorn main:app --reload --port 8000')
-          setResults([])
-          return
-        }
-        setError('Invalid response from server')
+      const { data, error: fetchError } = await apiFetch<SearchStockResponse>(
+        endpoints.searchStock(searchQuery)
+      )
+
+      if (fetchError) {
+        setError(fetchError)
         setResults([])
         return
       }
 
-      if (!response.ok) {
-        setError('Backend unavailable. Run: cd backend && python3 -m uvicorn main:app --reload --port 8000')
-        setResults([])
-        return
-      }
-
-      if (data.error) {
+      if (data?.error) {
         setError(data.error)
         setResults([])
       } else {
-        setResults(data.results || [])
+        setResults(data?.results || [])
       }
-    } catch (err) {
+    } catch {
       setError('Backend unavailable. Run: cd backend && python3 -m uvicorn main:app --reload --port 8000')
       setResults([])
     } finally {
@@ -93,13 +74,8 @@ export function StockSearch({
     }
   }
 
-  const formatMarketCap = (cap: number | null, currencySymbol = '$') => {
-    if (!cap) return 'N/A'
-    if (cap >= 1e12) return `${currencySymbol}${(cap / 1e12).toFixed(2)}T`
-    if (cap >= 1e9) return `${currencySymbol}${(cap / 1e9).toFixed(2)}B`
-    if (cap >= 1e6) return `${currencySymbol}${(cap / 1e6).toFixed(2)}M`
-    return `${currencySymbol}${cap.toLocaleString()}`
-  }
+  const formatMarketCapValue = (cap: number | null, currencySymbol = '$') =>
+    formatMarketCap(cap, currencySymbol)
 
   return (
     <div className="space-y-5">
@@ -206,7 +182,7 @@ export function StockSearch({
                   <div className="text-right text-sm">
                     <p className="text-muted-foreground">Market Cap</p>
                     <p className="font-semibold tabular-nums">
-                      {formatMarketCap(stock.marketCap, currencySymbol)}
+                      {formatMarketCapValue(stock.marketCap, currencySymbol)}
                     </p>
                   </div>
                   <Button
